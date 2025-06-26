@@ -4,6 +4,12 @@ import terminal
 
 import layoutEngine
 
+template withCursorPos(x, y: int, body: untyped) =
+  let (prevX, prevY) = getCursorPos()
+  setCursorPos(x, y)
+  body
+  setCursorPos(prevX, prevY)
+
 type
   Box = object
     cornerTopLeft, borderTop, cornerTopRight: Rect
@@ -61,29 +67,29 @@ const doubleBoxSymbols = initBoxSymbols("═", "║", "╔", "╗", "╚", "╝"
 const roundedBoxSymbols = initBoxSymbols("─", "│", "╭", "╮", "╰", "╯")
  
 proc drawBox(box: Box, symbols: BoxSymbols = roundedBoxSymbols) = 
-  setCursorPos(box.cornerTopLeft.x, box.cornerTopLeft.y)
-  stdout.write(symbols.cornerTopLeft)
-  setCursorPos(box.cornerTopRight.x, box.cornerTopRight.y)
-  stdout.write(symbols.cornerTopRight)
-  setCursorPos(box.cornerBottomLeft.x, box.cornerBottomLeft.y)
-  stdout.write(symbols.cornerBottomLeft)
-  setCursorPos(box.cornerBottomRight.x, box.cornerBottomRight.y)
-  stdout.write(symbols.cornerBottomRight)
+  withCursorPos(box.cornerTopLeft.x, box.cornerTopLeft.y):
+    stdout.write(symbols.cornerTopLeft)
+  withCursorPos(box.cornerTopRight.x, box.cornerTopRight.y):
+    stdout.write(symbols.cornerTopRight)
+  withCursorPos(box.cornerBottomLeft.x, box.cornerBottomLeft.y):
+    stdout.write(symbols.cornerBottomLeft)
+  withCursorPos(box.cornerBottomRight.x, box.cornerBottomRight.y):
+    stdout.write(symbols.cornerBottomRight)
 
 
   let horizontalBorder = symbols.horizontal.repeat(box.borderTop.width).join
 
-  setCursorPos(box.borderTop.x, box.borderTop.y)
-  stdout.write(horizontalBorder)
+  withCursorPos(box.borderTop.x, box.borderTop.y):
+    stdout.write(horizontalBorder)
   
-  setCursorPos(box.borderBottom.x, box.borderBottom.y)
-  stdout.write(horizontalBorder)
+  withCursorPos(box.borderBottom.x, box.borderBottom.y):
+    stdout.write(horizontalBorder)
 
   for i in 0 ..< box.borderLeft.height:
-    setCursorPos(box.borderLeft.x, box.borderLeft.y + i)
-    stdout.write(symbols.vertical)
-    setCursorPos(box.borderRight.x, box.borderRight.y + i)
-    stdout.write(symbols.vertical)
+    withCursorPos(box.borderLeft.x, box.borderLeft.y + i):
+      stdout.write(symbols.vertical)
+    withCursorPos(box.borderRight.x, box.borderRight.y + i):
+      stdout.write(symbols.vertical)
     
     
 when isMainModule:
@@ -120,11 +126,11 @@ when isMainModule:
       rows = layout(ldVertical, main, rowsConstraints)
 
     # echo "Outer Box: ", rect
-    drawBox(outerBox)
+    drawBox(outerBox, singleBoxSymbols)
     for row in rows:
       drawBox(initBox(row))
 
-    drawBox(initBox(sidebar))
+    drawBox(initBox(sidebar), doubleBoxSymbols)
  
 
     discard getch()
