@@ -4,8 +4,6 @@ import terminal
 
 import layoutEngine
 
-# TODO: Bottom Title border
-# TODO: Vertical Title borders
 
 template withCursorPos(x, y: int, body: untyped) =
   let (prevX, prevY) = getCursorPos()
@@ -22,7 +20,13 @@ type
   BorderSymbols = object
     horizontal, vertical, cornerTopLeft, cornerTopRight, cornerBottomLeft, cornerBottomRight: string
 
-  TitleAlignment= enum taLowerEnd, taCenter, taHigherEnd
+  TitleAlignment= enum
+    # Given a segment, either horizontal or vertical,
+    # with positions x1, x2 and y1, y2 respectively, lower end means the smaller x or y and higher end means larger x or y in x1, x2 and y1, y2.
+    # For example, for a horizontal segment, lower end means the left side.
+    taLowerEnd,
+    taCenter,
+    taHigherEnd
 
 proc initBox(rect: Rect): Box = 
   doAssert rect.width >= 3
@@ -77,18 +81,39 @@ proc defaultDraw(content: string) =
 
 proc drawHorizontal(rect: Rect, content: string, draw: proc(content: string) = defaultDraw) = 
   doAssert rect.height == 1
-  doAssert content.runeLen <= rect.width
+  doAssert content.runeLen == rect.width
+
   withCursorPos(rect.x, rect.y):
     draw(content)
 
+proc fillHorizontal(rect: Rect, symbol: string, draw: proc(content: string) = defaultDraw) = 
+  doAssert rect.height == 1
+  doAssert symbol.runeLen == 1
+  doAssert symbol.runeLen <= rect.width
+
+  let content = symbol.repeat(rect.width)
+  drawHorizontal(rect, content, draw)
+
+
 proc drawVertical(rect: Rect, content: string, draw: proc(content: string) = defaultDraw) = 
   doAssert rect.width == 1
-  doAssert content.runeLen <= rect.height
+  doAssert content.runeLen == rect.height
 
-  for i in 0 ..< rect.height:
+  # DO NOT use runeAt(i), it returns rune at BYTE index i, not string index i
+  # and runeAtPos is slow according to Nim manual
+  for i, r in content.toRunes:
     withCursorPos(rect.x, rect.y + i):
-      draw(content)
+      draw($r)
  
+
+proc fillVertical(rect: Rect, symbol: string, draw: proc(content: string) = defaultDraw) = 
+  doAssert rect.width == 1
+  doAssert symbol.runeLen == 1
+  doAssert symbol.runeLen <= rect.height
+
+  let content = symbol.repeat(rect.height)
+  drawVertical(rect, content, draw)
+
 proc drawSymbol(rect: Rect, content: string, draw: proc(content: string) = defaultDraw) = 
   doAssert rect.width == 1
   doAssert rect.height == 1
@@ -106,18 +131,16 @@ proc drawCorners(box: Box, symbols: BorderSymbols = defaultBorder) =
 
 
 proc drawLeftBorder(box: Box, symbols: BorderSymbols = defaultBorder) = 
-  drawVertical(box.borderLeft, symbols.vertical)
+  fillVertical(box.borderLeft, symbols.vertical)
 
 proc drawRightBorder(box: Box, symbols: BorderSymbols = defaultBorder) = 
-  drawVertical(box.borderRight, symbols.vertical)
+  fillVertical(box.borderRight, symbols.vertical)
 
 proc drawTopBorder(box: Box, symbols: BorderSymbols = defaultBorder) = 
-  let horizontalBorder = symbols.horizontal.repeat(box.borderTop.width).join
-  drawHorizontal(box.borderTop, horizontalBorder)
+  fillHorizontal(box.borderTop, symbols.horizontal)
 
 proc drawBottomBorder(box: Box, symbols: BorderSymbols = defaultBorder) = 
-  let horizontalBorder = symbols.horizontal.repeat(box.borderTop.width).join
-  drawHorizontal(box.borderBottom, horizontalBorder)
+  fillHorizontal(box.borderBottom, symbols.horizontal)
 
 proc drawTitleBorderHorizontal(border: Rect, title: string, alignment: TitleAlignment = taLowerEnd, minLengthEachEnd:Natural = 2, minTitleSpacePadding:Natural = 1, symbols: BorderSymbols = defaultBorder) = 
 
@@ -162,10 +185,57 @@ proc drawTitleBorderHorizontal(border: Rect, title: string, alignment: TitleAlig
     rightSection = sections[2]
 
 
-  drawHorizontal(leftSection, symbols.horizontal.repeat(leftSection.width))
+  fillHorizontal(leftSection, symbols.horizontal)
   drawHorizontal(titleSection, paddedTitle)
-  drawHorizontal(sections[2], symbols.horizontal.repeat(rightSection.width))
+  fillHorizontal(rightSection, symbols.horizontal)
 
+
+proc drawTitleBorderVertical(border: Rect, title: string, alignment: TitleAlignment = taLowerEnd, minLengthEachEnd:Natural = 2, minTitleSpacePadding:Natural = 1, symbols: BorderSymbols = defaultBorder) = 
+
+  let minSymbolLength = 2 * minLengthEachEnd + 2 * minTitleSpacePadding
+  doAssert title.runeLen <= border.height - minSymbolLength
+
+  let
+    padding = " ".repeat(minTitleSpacePadding)
+    paddedTitle = padding & title & padding
+  
+  var verticalConstraints: seq[Constraint]
+  case alignment:
+  of taLowerEnd:
+    verticalConstraints = @[
+      Constraint(kind: ckLength, length: minLengthEachEnd),
+      Constraint(kind: ckLength, length: paddedTitle.runeLen),
+      Constraint(kind: ckMinLength, minLength: minLengthEachEnd),
+    ]
+
+  of taCenter:
+    let
+      available = border.height - title.runeLen - minSymbolLength
+      topEndLength = available div 2
+
+    verticalConstraints = @[
+      Constraint(kind: ckLength, length: topEndLength + minLengthEachEnd),
+      Constraint(kind: ckLength, length: paddedTitle.runeLen),
+      Constraint(kind: ckMinLength, minLength: minLengthEachEnd),
+    ]
+
+  of taHigherEnd:
+    verticalConstraints = @[
+      Constraint(kind: ckMinLength, minLength: minLengthEachEnd),
+      Constraint(kind: ckLength, length: paddedTitle.runeLen),
+      Constraint(kind: ckLength, length: minLengthEachEnd),
+    ]
+
+  let 
+    sections = layout(ldVertical, border, verticalConstraints)
+    topSection = sections[0]
+    titleSection = sections[1]
+    bottomSection = sections[2]
+
+
+  fillVertical(topSection, symbols.vertical)
+  drawVertical(titleSection, paddedTitle)
+  fillVertical(bottomSection, symbols.vertical)
 
 proc drawTopTitleBox(box: Box, title: string, alignment: TitleAlignment = taLowerEnd) = 
   box.drawCorners
@@ -174,6 +244,26 @@ proc drawTopTitleBox(box: Box, title: string, alignment: TitleAlignment = taLowe
   box.drawLeftBorder
   box.drawRightBorder
 
+proc drawBottomTitleBox(box: Box, title: string, alignment: TitleAlignment = taLowerEnd) = 
+  box.drawCorners
+  box.drawTopBorder
+  box.borderBottom.drawTitleBorderHorizontal(title, alignment)
+  box.drawLeftBorder
+  box.drawRightBorder
+
+proc drawLeftTitleBox(box: Box, title: string, alignment: TitleAlignment = taLowerEnd) = 
+  box.drawCorners
+  box.drawTopBorder
+  box.drawBottomBorder
+  box.borderLeft.drawTitleBorderVertical(title, alignment)
+  box.drawRightBorder
+
+proc drawRightTitleBox(box: Box, title: string, alignment: TitleAlignment = taLowerEnd) = 
+  box.drawCorners
+  box.drawTopBorder
+  box.drawBottomBorder
+  box.drawLeftBorder
+  box.borderRight.drawTitleBorderVertical(title, alignment)
 
 proc drawDefaultBox(box: Box) = 
   box.drawCorners
@@ -184,10 +274,46 @@ proc drawDefaultBox(box: Box) =
 
     
 when isMainModule:
+
+  doAssert terminalWidth() >= 34, "Minimul terminal width to run demo is 34"
+  doAssert terminalHeight() >= 52, "Minimul terminal height to run demo is 52"
+  
+  proc drawDemoTitleBox(box: Box, alignment: TitleAlignment) = 
+    var
+      leftTitle = "Left"
+      rightTitle = "Right"
+      topTitle = "Top"
+      bottomTitle = "Bottom"
+
+
+    case alignment:
+    of taCenter:
+      leftTitle.add(" Center")
+      rightTitle.add(" Center")
+      topTitle.add(" Center")
+      bottomTitle.add(" Center")
+    of taLowerEnd:
+      leftTitle.add(" High")
+      rightTitle.add(" High")
+      topTitle.add(" Left")
+      bottomTitle.add(" Left")
+    of taHigherEnd:
+      leftTitle.add(" Low")
+      rightTitle.add(" Low")
+      topTitle.add(" Right")
+      bottomTitle.add(" Right")
+
+    box.drawCorners
+    box.borderRight.drawTitleBorderVertical(rightTitle, alignment)
+    box.borderLeft.drawTitleBorderVertical(leftTitle, alignment)
+    box.borderTop.drawTitleBorderHorizontal(topTitle, alignment)
+    box.borderBottom.drawTitleBorderHorizontal(bottomTitle, alignment)
+
   try:
     hideCursor()
     eraseScreen()
     setCursorPos(0, 0)
+    
     let
       x = 3
       y = 1
@@ -204,7 +330,6 @@ when isMainModule:
 
       rowsConstraints = @[
         Constraint(kind: ckMinLength, minLength: 5),
-        Constraint(kind: ckLength, length: 5),
         Constraint(kind: ckPercent, percent: 40),
         Constraint(kind: ckPercent, percent: 60),
       ]
@@ -213,21 +338,23 @@ when isMainModule:
       cols = layout(ldHorizontal, outerBox.canvas, colsConstraints)
       sidebar = cols[0]
       main = cols[1]
-      # mainBox = initBox(main)
       rows = layout(ldVertical, main, rowsConstraints)
 
-    # echo "Outer Box: ", rect
-    outerBox.drawTopTitleBox("Left Title")
+    outerBox.drawDemoTitleBox(taCenter)
 
     for i, row in rows:
-      if i == 0:
-        initBox(row).drawTopTitleBox("Centered Title", alignment=taCenter)
-      elif i == 1:
-        initBox(row).drawTopTitleBox("Right Title", alignment=taHigherEnd)
-      else:
-        drawDefaultBox(initBox(row))
+      let box = initBox(row)
 
-    drawDefaultBox(initBox(sidebar))
+      if i == rows.high - 1:
+        box.drawDemoTitleBox(taHigherEnd)
+
+      elif i == rows.high:
+        box.drawDemoTitleBox(taLowerEnd)
+
+      else:
+        box.drawDefaultBox()
+
+    initBox(sidebar).drawDefaultBox()
  
 
     discard getch()
