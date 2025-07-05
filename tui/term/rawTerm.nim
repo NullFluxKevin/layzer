@@ -4,19 +4,26 @@ import posix
 import termios
 import options
 
-type ReadTimeout* = distinct int
+
+type
+  ReadTimeout* = distinct int
+  RawInputBuffer* = string
+
 
 proc toReadTimeout*(timeoutMS: int): ReadTimeout = 
   doAssert timeoutMS >= 0 and timeoutMS mod 100 == 0, "Error: timeoutMS must be a positive multiple of 100 or 0"
   ReadTimeout(timeoutMS div 100)
 
+
 proc getTermCtrlAttr(): Termios = 
   let ret = tcGetAttr(STDIN_FILENO, addr result)
   doAssert ret == 0, "Fatal: Failed to get terminal attributes"
 
+
 proc setTermCtrlAttr(term: Termios) = 
   let ret = tcSetAttr(STDIN_FILENO, TCSAFLUSH, addr term)
   doAssert ret == 0, "Fatal: Failed to set terminal attributes"
+
 
 let origAttr = getTermCtrlAttr()
 
@@ -85,14 +92,19 @@ proc disableRawMode*() =
   setTermCtrlAttr(origAttr)
 
 
-template withRawMode*(body: untyped) = 
+template withRawMode*(readTimeout: ReadTimeout, body: untyped) = 
   try:
-    enableRawMode()
+    enableRawMode(readTimeout)
     body
   finally:
     disableRawMode()
 
+
+template withRawMode*(body: untyped) = 
+  withRawMode(100.toReadTimeout):
+    body
   
+
 proc tryReadByte*(): Option[char] = 
   var input: char
   let numBytesRead = read(STDIN_FILENO, addr input, 1)
@@ -105,20 +117,30 @@ proc tryReadByte*(): Option[char] =
     result = none(char)
   
 
+proc readPendingInput*(maxBufLen: Positive = 100): RawInputBuffer = 
+  result = ""
+  while result.len < maxBufLen:
+    let ret = tryReadByte()
+    if ret.isSome:
+      result.add(ret.get)
+
+    else:
+      break
+
+
 when isMainModule:
-  withRawMode:
-    while true:
-       let input = tryReadByte()
+   # Utility proc that shows the bytes of a key for quick reference.
+  proc showRawInputBytes() = 
+    echo "Press a key to see it's bytes. Press q to quit"
+    withRawMode:
+      while true:
+        let buffer = readPendingInput()
+        if buffer.len != 0:
+          stdout.write(repr(buffer), "\r\n")
+          if buffer == "q":
+            break
 
-       if input.isSome:
+  showRawInputBytes()
 
-         let c = input.get
-         if c == 'q':
-           break
-         else:
-           stdout.write(c, "\r\n")
-
-       else: 
-         stdout.write("No input. Press q to quit.", "\r\n")
       
   
