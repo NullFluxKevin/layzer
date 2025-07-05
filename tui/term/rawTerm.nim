@@ -112,12 +112,13 @@ when isMainModule:
 
        if input.isSome:
 
-         if input.get == 'q':
+         let c = input.get
+         if c == 'q':
            break
          else:
-           stdout.write(input, "\r\n")
+           stdout.write(c, "\r\n")
 
        else: 
-         stdout.write("No input", "\r\n")
+         stdout.write("No input. Press q to quit.", "\r\n")
       
   
