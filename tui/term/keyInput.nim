@@ -3,20 +3,33 @@ import options
 
 import rawTerm
 
-# TODO: Shift+Arrows,shift + other special keys 
-# TODO: Alt keys detection without using escape sequence table. i.e.: \ea = AltA, \eA = AltShiftA. check buffer.len for alt key that also could be prefix for longer sequences like \e[
-# TODO: Finish escape sequence table. F keys, page up/down etc
-# TODO: Compiler Warning: hole in Key enum conversion
+# Limitations:
+# 
+# TL;DR:
+# Linux only. Support for macOS and Windows is currently out of scope.
+# No mouse support (yet. Not a big fan of it, so no promises.)
+# Only detects keys and mod+key combos explicitly defined in the Key enum.
+# Contributions are welcome.
+#
+# 
+# Ctrl-Shift-key combo is not supported due to OS terminal API limitations.
+# These escape sequences are specific to terminal emulators.
+# Extend the defaultKeyEscSeqTable for the sequences of your terminal emulator.
+# The same goes for other keys.
+# If a key isn't detected, run rawTerm.nim to inspect its escape sequence and extend defaultKeyEscSeqTable accordingly.
+#
+# 
+# Less commonly used combos are not defined (yet):
+# Mod+symbol like ctrl-[, alt-Tab. However, those in the ASCII table are defined.
+# Mod+number like ctrl-1, alt-2
 
-# NOTE: NO MOUSE SUPPORT
  
 type
-  # Key enum is mostly copied from illwill module, except Key.None and the mouse input. Other parts are also heavily insprired by illwill.
+  # Key enum is mostly copied from illwill module, except Key.None and the mouse input, and with addition of Alt and AltShift key combos. Other parts are also heavily insprired by illwill.
   # illwill license: WTFPL license
   # Source code: https://github.com/johnnovak/illwill/blob/99a120f7f69868b94f5d35ce7e21dd12535de70c/illwill.nim#L67
   
   Key* {.pure.} = enum      ## Supported single key presses and key combinations
-    # None = (-1, "None"),
 
     # Special ASCII characters
     CtrlA  = (1, "CtrlA"),
@@ -234,29 +247,93 @@ type
     AltShiftZ = "AltShiftZ"
 
 
+type
+  UnknownKeyCodeHandler= proc(keyCode: int)
+  UnknownEscapeSequenceHandler= proc(escSeq: string)
+
+  
+var
+  handleUnknownKeyCode: UnknownKeyCodeHandler = nil
+  handleUnknownEscapeSequence: UnknownEscapeSequenceHandler = nil
+
+
+proc onUnknownKeyCode(handler: UnknownKeyCodeHandler) = 
+  handleUnknownKeyCode = handler
+
+
+proc onUnknownEscapeSequence(handler: UnknownEscapeSequenceHandler) = 
+  handleUnknownEscapeSequence = handler
+
+
+proc tryToKey(keyCode: int): Option[Key] =
+  try:
+    {.push warning[HoleEnumConv]: off.}
+    result = some(Key(keyCode))
+    {.pop.}
+  except RangeDefect:
+    if not handleUnknownKeyCode.isNil:
+      handleUnknownKeyCode(keyCode)
+
+    result = none(Key)
+
 type 
   KeyEscapeSequenceTable = Table[Key, seq[string]]
 
-const keyEscSeqTable: KeyEscapeSequenceTable = {
-  Key.Up: @["\e[A", ],
-  Key.Down: @["\e[B", ],
-  Key.Right: @["\e[C", ],
-  Key.Left: @["\e[D", ],
+
+var defaultKeyEscSeqTable*: KeyEscapeSequenceTable = {
+  Key.Up: @["\e[A"],
+  Key.Down: @["\e[B"],
+  Key.Right: @["\e[C"],
+  Key.Left: @["\e[D"],
   Key.Home: @["\e[1~"],
+  Key.Insert: @["\e[2~"],
+  Key.Delete: @["\e[3~"],
   Key.End: @["\e[4~"],
+  Key.PageUp: @["\e[5~"],
+  Key.PageDown: @["\e[6~"],
+  Key.F1: @["\eOP"],
+  Key.F2: @["\eOQ"],
+  Key.F3: @["\eOR"],
+  Key.F4: @["\eOS"],
+  Key.F5: @["\e[15~"],
+  Key.F6: @["\e[17~"],
+  Key.F7: @["\e[18~"],
+  Key.F8: @["\e[19~"],
+  Key.F9: @["\e[20~"],
+  Key.F10: @["\e[21~"],
+  Key.F11: @["\e[23~"],
+  Key.F12: @["\e[24~"],
 }.toTable
 
 
-proc tryReadKey*(escSeqTable: KeyEscapeSequenceTable = keyEscSeqTable): Option[Key] = 
+proc tryReadKey*(escSeqTable: KeyEscapeSequenceTable = defaultKeyEscSeqTable): Option[Key] = 
   result = none(Key)
 
   let buffer = readPendingInput()
 
-  if buffer.len == 1:
+  case buffer.len:
+  of 1:
     if buffer == "\n": result = some(Key.Enter)
     elif buffer == "\b": result = some(Key.Backspace)
     elif buffer == "\e": result = some(Key.Escape)
-    else: result = some(Key(int(buffer[0])))
+    else:
+      let k = tryToKey(int(buffer[0]))
+      doAssert k.isSome, "Fatal: Failed to convert known escape sequence to key"
+      result = k
+
+  of 2:
+    if buffer[0] == '\e':
+      if buffer[1] in 'a' .. 'z':
+        let keyCode = ord(buffer[1]) - ord('a') + ord(Key.AltA)
+
+        let k = tryToKey(keyCode)
+        doAssert k.isSome, "Fatal: Failed to convert known escape sequence to key"
+        result = k
+      elif buffer[1] in 'A' .. 'Z':
+        let keyCode = ord(buffer[1]) - ord('A') + ord(Key.AltShiftA)
+        let k = tryToKey(keyCode)
+        doAssert k.isSome, "Fatal: Failed to convert known escape sequence to key"
+        result = k
 
   else:
     for key, value in escSeqTable:
@@ -264,7 +341,9 @@ proc tryReadKey*(escSeqTable: KeyEscapeSequenceTable = keyEscSeqTable): Option[K
         result = some(key)
         break
 
-  
+  if buffer.len > 0 and result.isNone and not handleUnknownEscapeSequence.isNil:
+    handleUnknownEscapeSequence(buffer)
+      
 
 when isMainModule:
   proc readKeyDemo() = 
@@ -278,5 +357,7 @@ when isMainModule:
           break
 
     
+  echo "Press key or mod+key combo for demo. Press q to quit."
   withRawMode:
     readKeyDemo()
+        
