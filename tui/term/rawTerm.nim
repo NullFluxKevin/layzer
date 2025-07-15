@@ -4,16 +4,24 @@ import posix
 import termios
 import options
 
+import selectWrapper
+
 
 type
   ReadTimeout* = distinct int
-  RawInputBuffer* = string
+  InputBuffer* = seq[string]
 
 
-proc toReadTimeout*(timeoutMS: int): ReadTimeout = 
-  doAssert timeoutMS >= 0 and timeoutMS mod 100 == 0, "Error: timeoutMS must be a positive multiple of 100 or 0"
-  ReadTimeout(timeoutMS div 100)
+const stdinFDSet = block:
+  var fdSet = FileDescriptorSet()
+  fdSet.incl(STDIN_FILENO)
+  fdSet
 
+
+proc isStdinReady*(timeoutMS: int): bool =
+  let readyFds = getReadyToReadFds(timeoutMS, stdinFDSet)
+  readyFds.contains(STDIN_FILENO)
+    
 
 proc getTermCtrlAttr(): Termios = 
   let ret = tcGetAttr(STDIN_FILENO, addr result)
@@ -68,13 +76,14 @@ proc disableMiscFlags(term: var Termios) =
   disableControlFlag(term.c_cflag, CS8)
 
 
-proc setReadTimeout(term: var Termios, readTimeout: ReadTimeout) = 
+proc setReadTimeout(term: var Termios) = 
   # Minimum number of bytes required to be read before return
   term.c_cc[VMIN] = 0.char
-  term.c_cc[VTIME] = readTimeout.char
+  # timeout (Unit: multiple of 100 ms, so VTIME=2 means 200ms)
+  term.c_cc[VTIME] = 0.char
 
 
-proc enableRawMode*(readTimeout: ReadTimeout = 100.toReadTimeout) =
+proc enableRawMode*() =
   var raw = getTermCtrlAttr()
 
   raw.disableInputEcho()
@@ -83,7 +92,7 @@ proc enableRawMode*(readTimeout: ReadTimeout = 100.toReadTimeout) =
   raw.disableOutputProcessing()
   raw.disableMiscFlags()
 
-  raw.setReadTimeout(readTimeout)
+  raw.setReadTimeout()
 
   setTermCtrlAttr(raw)
 
@@ -92,37 +101,47 @@ proc disableRawMode*() =
   setTermCtrlAttr(origAttr)
 
 
-template withRawMode*(readTimeout: ReadTimeout, body: untyped) = 
+template withRawMode*(body: untyped) = 
   try:
-    enableRawMode(readTimeout)
+    enableRawMode()
     body
   finally:
     disableRawMode()
 
 
-template withRawMode*(body: untyped) = 
-  withRawMode(100.toReadTimeout):
-    body
-  
+proc tryReadByte*(timeoutMS: int = 100): Option[char] =
+  result = none(char)
 
-proc tryReadByte*(): Option[char] = 
-  var input: char
-  let numBytesRead = read(STDIN_FILENO, addr input, 1)
+  if isStdinReady(timeoutMS):
+    var input: char
+    let numBytesRead = read(STDIN_FILENO, addr input, 1)
 
-  if numBytesRead == 1:
-    result = some(input)
+    if numBytesRead == 1:
+      result = some(input)
 
-  elif numBytesRead == -1:
-    doAssert errno == EAGAIN, "Fatal: Failed to read from stdin"
-    result = none(char)
-  
+    elif numBytesRead == -1:
+      doAssert errno == EAGAIN, "Fatal: Failed to read from stdin"
+      result = none(char)
+    
 
-proc readPendingInput*(maxBufLen: Positive = 100): RawInputBuffer = 
-  result = ""
+proc readPendingInput*(maxBufLen: Positive = 100): InputBuffer = 
   while result.len < maxBufLen:
     let ret = tryReadByte()
     if ret.isSome:
-      result.add(ret.get)
+      let ch = ret.get
+      if ch == '\e':
+        var escapeSequence = ""
+        escapeSequence.add(ch)
+
+        var r = tryReadByte(10)
+        while r.isSome:
+          escapeSequence.add(r.get)
+          r = tryReadByte(10)
+
+        result.add(escapeSequence)
+
+      else:
+        result.add($ret.get)
 
     else:
       break
@@ -137,7 +156,7 @@ when isMainModule:
         let buffer = readPendingInput()
         if buffer.len != 0:
           stdout.write(repr(buffer), "\r\n")
-          if buffer == "q":
+          if "q" in buffer:
             break
 
   showRawInputBytes()
