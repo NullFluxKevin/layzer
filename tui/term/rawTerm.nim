@@ -7,6 +7,12 @@ import options
 import selectWrapper
 
 
+const
+  defaultReadTimeout = 100
+  defaultEscSequenceReadTimeout = 10
+  defaultMaxInputBufLen = 100
+
+
 type
   ReadTimeout* = distinct int
   InputBuffer* = seq[string]
@@ -109,7 +115,7 @@ template withRawMode*(body: untyped) =
     disableRawMode()
 
 
-proc tryReadByte*(timeoutMS: int = 100): Option[char] =
+proc tryReadByte*(timeoutMS: int = defaultReadTimeout): Option[char] =
   result = none(char)
 
   if isStdinReady(timeoutMS):
@@ -124,7 +130,7 @@ proc tryReadByte*(timeoutMS: int = 100): Option[char] =
       result = none(char)
     
 
-proc readPendingInput*(maxBufLen: Positive = 100): InputBuffer = 
+proc readPendingInput*(maxBufLen: Positive = defaultMaxInputBufLen): InputBuffer = 
   while result.len < maxBufLen:
     let ret = tryReadByte()
     if ret.isSome:
@@ -133,10 +139,10 @@ proc readPendingInput*(maxBufLen: Positive = 100): InputBuffer =
         var escapeSequence = ""
         escapeSequence.add(ch)
 
-        var r = tryReadByte(10)
+        var r = tryReadByte(defaultEscSequenceReadTimeout)
         while r.isSome:
           escapeSequence.add(r.get)
-          r = tryReadByte(10)
+          r = tryReadByte(defaultEscSequenceReadTimeout)
 
         result.add(escapeSequence)
 
