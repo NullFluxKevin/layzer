@@ -257,11 +257,11 @@ var
   handleUnknownEscapeSequence: UnknownEscapeSequenceHandler = nil
 
 
-proc onUnknownKeyCode(handler: UnknownKeyCodeHandler) = 
+proc onUnknownKeyCode*(handler: UnknownKeyCodeHandler) = 
   handleUnknownKeyCode = handler
 
 
-proc onUnknownEscapeSequence(handler: UnknownEscapeSequenceHandler) = 
+proc onUnknownEscapeSequence*(handler: UnknownEscapeSequenceHandler) = 
   handleUnknownEscapeSequence = handler
 
 
@@ -275,6 +275,7 @@ proc tryToKey(keyCode: int): Option[Key] =
       handleUnknownKeyCode(keyCode)
 
     result = none(Key)
+
 
 type 
   KeyEscapeSequenceTable = Table[Key, seq[string]]
@@ -306,58 +307,54 @@ var defaultKeyEscSeqTable*: KeyEscapeSequenceTable = {
 }.toTable
 
 
-proc tryReadKey*(escSeqTable: KeyEscapeSequenceTable = defaultKeyEscSeqTable): Option[Key] = 
-  result = none(Key)
+proc getPressedKeys*(maxBufLen: int = 100, escSeqTable: KeyEscapeSequenceTable = defaultKeyEscSeqTable): seq[Key] = 
 
-  let buffer = readPendingInput()
+  let buffer = readPendingInput(maxBufLen)
 
-  case buffer.len:
-  of 1:
-    if buffer == "\n": result = some(Key.Enter)
-    elif buffer == "\b": result = some(Key.Backspace)
-    elif buffer == "\e": result = some(Key.Escape)
-    else:
-      let k = tryToKey(int(buffer[0]))
+  for escSeq in buffer:
+    var k: Option[Key] = none(Key)
+
+    case escSeq.len:
+    of 1:
+      k = tryToKey(int(escSeq[0]))
       doAssert k.isSome, "Fatal: Failed to convert known escape sequence to key"
-      result = k
+      result.add(k.get)
+    of 2:
+      if escSeq[0] == '\e':
+        if escSeq[1] in 'a' .. 'z':
+          let keyCode = ord(escSeq[1]) - ord('a') + ord(Key.AltA)
 
-  of 2:
-    if buffer[0] == '\e':
-      if buffer[1] in 'a' .. 'z':
-        let keyCode = ord(buffer[1]) - ord('a') + ord(Key.AltA)
-
-        let k = tryToKey(keyCode)
-        doAssert k.isSome, "Fatal: Failed to convert known escape sequence to key"
-        result = k
-      elif buffer[1] in 'A' .. 'Z':
-        let keyCode = ord(buffer[1]) - ord('A') + ord(Key.AltShiftA)
-        let k = tryToKey(keyCode)
-        doAssert k.isSome, "Fatal: Failed to convert known escape sequence to key"
-        result = k
-
-  else:
-    for key, value in escSeqTable:
-      if buffer in value:
-        result = some(key)
-        break
-
-  if buffer.len > 0 and result.isNone and not handleUnknownEscapeSequence.isNil:
-    handleUnknownEscapeSequence(buffer)
+          k = tryToKey(keyCode)
+          doAssert k.isSome, "Fatal: Failed to convert known escape sequence to key"
+          result.add(k.get)
+        elif escSeq[1] in 'A' .. 'Z':
+          let keyCode = ord(escSeq[1]) - ord('A') + ord(Key.AltShiftA)
+          k = tryToKey(keyCode)
+          doAssert k.isSome, "Fatal: Failed to convert known escape sequence to key"
+          result.add(k.get)
       
+    else:
+      for key, value in escSeqTable:
+        if escSeq in value:
+          k = some(key)
+          result.add(key)
+          break
+
+    if escSeq.len > 0 and k.isNone and not handleUnknownEscapeSequence.isNil:
+      handleUnknownEscapeSequence(escSeq)
+
 
 when isMainModule:
-  proc readKeyDemo() = 
+  proc getPressedKeysDemo() = 
     while true:
-      let ret = tryReadKey()
-      if ret.isSome:
-        let key = ret.get
-        stdout.write(key, "\r\n")
-
-        if key == Key.Q:
+      let keys = getPressedKeys()
+      if keys.len > 0:
+        stdout.write(keys, "\r\n")
+        if Key.Q in keys:
           break
 
     
   echo "Press key or mod+key combo for demo. Press q to quit."
   withRawMode:
-    readKeyDemo()
+    getPressedKeysDemo()
         
