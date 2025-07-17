@@ -4,23 +4,25 @@ import terminal
 
 import layoutEngine
 
+export layoutEngine
 
-template withCursorPos(x, y: int, body: untyped) =
+
+template withCursorPos*(x, y: int, body: untyped) =
   let (prevX, prevY) = getCursorPos()
   setCursorPos(x, y)
   body
   setCursorPos(prevX, prevY)
 
 type
-  Box = object
+  Box* = object
     cornerTopLeft, borderTop, cornerTopRight: Rect
     borderLeft, canvas, borderRight: Rect
     cornerBottomLeft, borderBottom, cornerBottomRight: Rect
 
-  BorderSymbols = object
+  BorderSymbols* = object
     horizontal, vertical, cornerTopLeft, cornerTopRight, cornerBottomLeft, cornerBottomRight: string
 
-  TitleAlignment= enum
+  TitleAlignment* = enum
     # Given a segment, either horizontal or vertical,
     # with positions x1, x2 and y1, y2 respectively, lower end means the smaller x or y and higher end means larger x or y in x1, x2 and y1, y2.
     # For example, for a horizontal segment, lower end means the left side.
@@ -28,7 +30,7 @@ type
     taCenter,
     taHigherEnd
 
-proc initBox(rect: Rect): Box = 
+proc initBox*(rect: Rect): Box = 
   doAssert rect.width >= 3
   doAssert rect.height >= 3
   let
@@ -54,7 +56,7 @@ proc initBox(rect: Rect): Box =
   (result.cornerBottomLeft, result.borderBottom, result.cornerBottomRight) = (bottomRowCols[0], bottomRowCols[1], bottomRowCols[2])
 
 
-proc initBorderSymbols(horizontal, vertical, cornerTopLeft, cornerTopRight, cornerBottomLeft, cornerBottomRight: string): BorderSymbols = 
+proc initBorderSymbols*(horizontal, vertical, cornerTopLeft, cornerTopRight, cornerBottomLeft, cornerBottomRight: string): BorderSymbols = 
   doAssert horizontal.runeLen == 1
   doAssert vertical.runeLen == 1
   doAssert cornerTopLeft.runeLen == 1
@@ -76,17 +78,17 @@ const doubleBorder = initBorderSymbols("═", "║", "╔", "╗", "╚", "╝")
 const roundedBorder = initBorderSymbols("─", "│", "╭", "╮", "╰", "╯")
 const defaultBorder = roundedBorder
 
-proc defaultDraw(content: string) =
+proc defaultDraw*(content: string) =
   stdout.write(content)
 
-proc drawHorizontal(rect: Rect, content: string, draw: proc(content: string) = defaultDraw) = 
+proc drawHorizontal*(rect: Rect, content: string, draw: proc(content: string) = defaultDraw) = 
   doAssert rect.height == 1
   doAssert content.runeLen == rect.width
 
   withCursorPos(rect.x, rect.y):
     draw(content)
 
-proc fillHorizontal(rect: Rect, symbol: string, draw: proc(content: string) = defaultDraw) = 
+proc fillHorizontal*(rect: Rect, symbol: string, draw: proc(content: string) = defaultDraw) = 
   doAssert rect.height == 1
   doAssert symbol.runeLen == 1
   doAssert symbol.runeLen <= rect.width
@@ -95,7 +97,7 @@ proc fillHorizontal(rect: Rect, symbol: string, draw: proc(content: string) = de
   drawHorizontal(rect, content, draw)
 
 
-proc drawVertical(rect: Rect, content: string, draw: proc(content: string) = defaultDraw) = 
+proc drawVertical*(rect: Rect, content: string, draw: proc(content: string) = defaultDraw) = 
   doAssert rect.width == 1
   doAssert content.runeLen == rect.height
 
@@ -106,7 +108,7 @@ proc drawVertical(rect: Rect, content: string, draw: proc(content: string) = def
       draw($r)
  
 
-proc fillVertical(rect: Rect, symbol: string, draw: proc(content: string) = defaultDraw) = 
+proc fillVertical*(rect: Rect, symbol: string, draw: proc(content: string) = defaultDraw) = 
   doAssert rect.width == 1
   doAssert symbol.runeLen == 1
   doAssert symbol.runeLen <= rect.height
@@ -114,7 +116,7 @@ proc fillVertical(rect: Rect, symbol: string, draw: proc(content: string) = defa
   let content = symbol.repeat(rect.height)
   drawVertical(rect, content, draw)
 
-proc drawSymbol(rect: Rect, content: string, draw: proc(content: string) = defaultDraw) = 
+proc drawSymbol*(rect: Rect, content: string, draw: proc(content: string) = defaultDraw) = 
   doAssert rect.width == 1
   doAssert rect.height == 1
   doAssert content.runeLen == 1
@@ -123,26 +125,26 @@ proc drawSymbol(rect: Rect, content: string, draw: proc(content: string) = defau
     draw(content)
 
 
-proc drawCorners(box: Box, symbols: BorderSymbols = defaultBorder) = 
+proc drawCorners*(box: Box, symbols: BorderSymbols = defaultBorder) = 
   drawSymbol(box.cornerTopLeft, symbols.cornerTopLeft)
   drawSymbol(box.cornerTopRight, symbols.cornerTopRight)
   drawSymbol(box.cornerBottomLeft, symbols.cornerBottomLeft)
   drawSymbol(box.cornerBottomRight, symbols.cornerBottomRight)
 
 
-proc drawLeftBorder(box: Box, symbols: BorderSymbols = defaultBorder) = 
+proc drawLeftBorder*(box: Box, symbols: BorderSymbols = defaultBorder) = 
   fillVertical(box.borderLeft, symbols.vertical)
 
-proc drawRightBorder(box: Box, symbols: BorderSymbols = defaultBorder) = 
+proc drawRightBorder*(box: Box, symbols: BorderSymbols = defaultBorder) = 
   fillVertical(box.borderRight, symbols.vertical)
 
-proc drawTopBorder(box: Box, symbols: BorderSymbols = defaultBorder) = 
+proc drawTopBorder*(box: Box, symbols: BorderSymbols = defaultBorder) = 
   fillHorizontal(box.borderTop, symbols.horizontal)
 
-proc drawBottomBorder(box: Box, symbols: BorderSymbols = defaultBorder) = 
+proc drawBottomBorder*(box: Box, symbols: BorderSymbols = defaultBorder) = 
   fillHorizontal(box.borderBottom, symbols.horizontal)
 
-proc drawTitleBorderHorizontal(border: Rect, title: string, alignment: TitleAlignment = taLowerEnd, minLengthEachEnd:Natural = 2, minTitleSpacePadding:Natural = 1, symbols: BorderSymbols = defaultBorder) = 
+proc drawTitleBorderHorizontal*(border: Rect, title: string, alignment: TitleAlignment = taLowerEnd, minLengthEachEnd:Natural = 2, minTitleSpacePadding:Natural = 1, symbols: BorderSymbols = defaultBorder) = 
 
   let minSymbolLength = 2 * minLengthEachEnd + 2 * minTitleSpacePadding
   doAssert title.runeLen <= border.width - minSymbolLength
@@ -190,7 +192,7 @@ proc drawTitleBorderHorizontal(border: Rect, title: string, alignment: TitleAlig
   fillHorizontal(rightSection, symbols.horizontal)
 
 
-proc drawTitleBorderVertical(border: Rect, title: string, alignment: TitleAlignment = taLowerEnd, minLengthEachEnd:Natural = 2, minTitleSpacePadding:Natural = 1, symbols: BorderSymbols = defaultBorder) = 
+proc drawTitleBorderVertical*(border: Rect, title: string, alignment: TitleAlignment = taLowerEnd, minLengthEachEnd:Natural = 2, minTitleSpacePadding:Natural = 1, symbols: BorderSymbols = defaultBorder) = 
 
   let minSymbolLength = 2 * minLengthEachEnd + 2 * minTitleSpacePadding
   doAssert title.runeLen <= border.height - minSymbolLength
@@ -237,35 +239,35 @@ proc drawTitleBorderVertical(border: Rect, title: string, alignment: TitleAlignm
   drawVertical(titleSection, paddedTitle)
   fillVertical(bottomSection, symbols.vertical)
 
-proc drawTopTitleBox(box: Box, title: string, alignment: TitleAlignment = taLowerEnd) = 
+proc drawTopTitleBox*(box: Box, title: string, alignment: TitleAlignment = taLowerEnd) = 
   box.drawCorners
   box.borderTop.drawTitleBorderHorizontal(title, alignment)
   box.drawBottomBorder
   box.drawLeftBorder
   box.drawRightBorder
 
-proc drawBottomTitleBox(box: Box, title: string, alignment: TitleAlignment = taLowerEnd) = 
+proc drawBottomTitleBox*(box: Box, title: string, alignment: TitleAlignment = taLowerEnd) = 
   box.drawCorners
   box.drawTopBorder
   box.borderBottom.drawTitleBorderHorizontal(title, alignment)
   box.drawLeftBorder
   box.drawRightBorder
 
-proc drawLeftTitleBox(box: Box, title: string, alignment: TitleAlignment = taLowerEnd) = 
+proc drawLeftTitleBox*(box: Box, title: string, alignment: TitleAlignment = taLowerEnd) = 
   box.drawCorners
   box.drawTopBorder
   box.drawBottomBorder
   box.borderLeft.drawTitleBorderVertical(title, alignment)
   box.drawRightBorder
 
-proc drawRightTitleBox(box: Box, title: string, alignment: TitleAlignment = taLowerEnd) = 
+proc drawRightTitleBox*(box: Box, title: string, alignment: TitleAlignment = taLowerEnd) = 
   box.drawCorners
   box.drawTopBorder
   box.drawBottomBorder
   box.drawLeftBorder
   box.borderRight.drawTitleBorderVertical(title, alignment)
 
-proc drawDefaultBox(box: Box) = 
+proc drawDefaultBox*(box: Box) = 
   box.drawCorners
   box.drawTopBorder
   box.drawBottomBorder
