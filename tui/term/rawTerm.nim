@@ -6,6 +6,7 @@ import options
 
 import selectWrapper
 
+export Milliseconds
 
 var
   isRawModeEnabled = false
@@ -148,10 +149,13 @@ proc tryReadKeySequence*(timeout, escSeqTimeout: Milliseconds): Option[KeySequen
       var escapeSequence = ""
       escapeSequence.add(ch)
 
-      var r = tryReadByte(escSeqTimeout)
-      while r.isSome:
+      while true:
+        var r = tryReadByte(escSeqTimeout)
+        if r.isNone:
+          break
+
         escapeSequence.add(r.get)
-        r = tryReadByte(escSeqTimeout)
+
       result = some(escapeSequence)
 
     else:
