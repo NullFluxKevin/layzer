@@ -3,12 +3,15 @@ import sets
 
 export sets
 
-type FileDescriptorSet* = HashSet[cint]
+
+type
+  FileDescriptorSet* = HashSet[cint]
+  Milliseconds* = Natural
 
 
-proc toTimeval*(ms: int): Timeval =
-  result.tv_sec = Time(ms div 1000)
-  result.tv_usec = 1000 * (ms mod 1000)
+proc toTimeval(duration: Milliseconds): Timeval =
+  result.tv_sec = Time(duration div 1000)
+  result.tv_usec = 1000 * (duration mod 1000)
   
 
 proc makeSelectArgs*(fdSet: FileDescriptorSet): tuple[fds: TFdSet, maxFd: cint] =
@@ -22,19 +25,21 @@ proc makeSelectArgs*(fdSet: FileDescriptorSet): tuple[fds: TFdSet, maxFd: cint] 
       result.maxFd = fd
 
 
-proc getReadyToReadFds*(timeoutMS: int, readFds: FileDescriptorSet): FileDescriptorSet = 
-  let tv = toTimeval(timeoutMS)
+proc getReadyToReadFds*(timeout: Milliseconds, readFds: FileDescriptorSet): FileDescriptorSet = 
+  let tv = toTimeval(timeout)
   var (fds, maxFd) = makeSelectArgs(readFds)
-  discard select(maxFd + 1, addr fds, nil, nil, addr tv)
+  let selectFlag = select(maxFd + 1, addr fds, nil, nil, addr tv)
+  doAssert selectFlag >= 0, "Fatal: An irrecoverable error occurred when calling select for checking file descriptors for reading."
   for fd in readFds:
     if FD_ISSET(fd, fds) != 0:
       result.incl(fd)
 
 
-proc getReadyToWriteFds*(timeoutMS: int, writeFds: FileDescriptorSet): FileDescriptorSet = 
-  let tv = toTimeval(timeoutMS)
+proc getReadyToWriteFds*(timeout: Milliseconds, writeFds: FileDescriptorSet): FileDescriptorSet = 
+  let tv = toTimeval(timeout)
   var (fds, maxFd) = makeSelectArgs(writeFds)
-  discard select(maxFd + 1, nil, addr fds, nil, addr tv)
+  let selectFlag = select(maxFd + 1, nil, addr fds, nil, addr tv)
+  doAssert selectFlag >= 0, "Fatal: An irrecoverable error occurred when calling select for checking file descriptors for writing."
   for fd in writeFds:
     if FD_ISSET(fd, fds) != 0:
       result.incl(fd)
@@ -47,7 +52,7 @@ when isMainModule:
     fdSet.incl(0)
     fdSet.incl(100)
 
-    let (fds, maxFd) = makeSelectArgs(fdSet)
+    let (_, maxFd) = makeSelectArgs(fdSet)
     
     doAssert maxFd == 100
 
@@ -70,7 +75,10 @@ when isMainModule:
     doAssert ready.contains(readFd)
 
     # clean up
-    discard read(readFd, cast[pointer](alloc(1)), 1)
+    var dummy: char
+    discard read(readFd, addr dummy, 1)
     discard close(readFd)
     discard close(writeFd)
+
+  echo "All tests passed."
 
