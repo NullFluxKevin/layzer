@@ -7,10 +7,9 @@ import options
 import selectWrapper
 
 
-const
-  defaultReadTimeout = 100
-  defaultEscSequenceReadTimeout = 10
-
+var
+  isRawModeEnabled = false
+  origAttr: Termios
 
 type
   KeySequence* = string
@@ -22,8 +21,11 @@ const stdinFDSet = block:
   fdSet
 
 
-proc isStdinReady*(timeoutMS: int): bool =
-  let readyFds = getReadyToReadFds(timeoutMS, stdinFDSet)
+proc isStdinReady*(timeout: Milliseconds): bool =
+
+  doAssert isRawModeEnabled, "Error: Please enable raw terminal mode first using the enableRawMode proc or the withRawMode template."
+
+  let readyFds = getReadyToReadFds(timeout, stdinFDSet)
   readyFds.contains(STDIN_FILENO)
     
 
@@ -37,7 +39,6 @@ proc setTermCtrlAttr(term: Termios) =
   doAssert ret == 0, "Fatal: Failed to set terminal attributes"
 
 
-let origAttr = getTermCtrlAttr()
 
 
 proc disableControlFlag(flag: var Cflag, mask: Cflag) =
@@ -88,21 +89,29 @@ proc setReadTimeout(term: var Termios) =
 
 
 proc enableRawMode*() =
-  var raw = getTermCtrlAttr()
+  if not isRawModeEnabled:
+    origAttr = getTermCtrlAttr()
 
-  raw.disableInputEcho()
-  raw.disableInputLineBuffer()
-  raw.disableSignals()
-  raw.disableOutputProcessing()
-  raw.disableMiscFlags()
+    # Termios is a value type, this is safe, raw is a copy of origAttr
+    var raw = origAttr
 
-  raw.setReadTimeout()
+    raw.disableInputEcho()
+    raw.disableInputLineBuffer()
+    raw.disableSignals()
+    raw.disableOutputProcessing()
+    raw.disableMiscFlags()
 
-  setTermCtrlAttr(raw)
+    raw.setReadTimeout()
+
+    setTermCtrlAttr(raw)
+
+    isRawModeEnabled = true
 
 
 proc disableRawMode*() = 
-  setTermCtrlAttr(origAttr)
+  if isRawModeEnabled:
+    setTermCtrlAttr(origAttr)
+    isRawModeEnabled = false
 
 
 template withRawMode*(body: untyped) = 
@@ -113,10 +122,10 @@ template withRawMode*(body: untyped) =
     disableRawMode()
 
 
-proc tryReadByte*(timeoutMS: int = defaultReadTimeout): Option[char] =
+proc tryReadByte*(timeout: Milliseconds): Option[char] =
   result = none(char)
 
-  if isStdinReady(timeoutMS):
+  if isStdinReady(timeout):
     var input: char
     let numBytesRead = read(STDIN_FILENO, addr input, 1)
 
@@ -128,20 +137,21 @@ proc tryReadByte*(timeoutMS: int = defaultReadTimeout): Option[char] =
       result = none(char)
 
 
-proc tryReadKeySequence*(): Option[KeySequence] = 
+proc tryReadKeySequence*(timeout, escSeqTimeout: Milliseconds): Option[KeySequence] = 
+  # escSeqTimeout is the wait time within which bytes collected will be considered part of the escape sequence. It should be small like 10ms, 50ms.
   result = none(KeySequence)
 
-  let ret = tryReadByte()
+  let ret = tryReadByte(timeout)
   if ret.isSome:
     let ch = ret.get
     if ch == '\e':
       var escapeSequence = ""
       escapeSequence.add(ch)
 
-      var r = tryReadByte(defaultEscSequenceReadTimeout)
+      var r = tryReadByte(escSeqTimeout)
       while r.isSome:
         escapeSequence.add(r.get)
-        r = tryReadByte(defaultEscSequenceReadTimeout)
+        r = tryReadByte(escSeqTimeout)
       result = some(escapeSequence)
 
     else:
@@ -151,10 +161,10 @@ proc tryReadKeySequence*(): Option[KeySequence] =
 when isMainModule:
    # Utility proc that shows the bytes of a key for quick reference.
   proc showRawInputBytes() = 
-    echo "Press a key to see it's bytes. Press q to quit"
+    echo "Press a key to see it's sequence. Press q to quit"
     withRawMode:
       while true:
-          let op = tryReadKeySequence()
+          let op = tryReadKeySequence(100, 10)
           if op.isSome:
             let keySeq = op.get
             stdout.write(repr(keySeq), "\r\n")
