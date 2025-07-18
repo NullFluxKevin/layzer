@@ -248,31 +248,18 @@ type
 
 
 type
-  UnknownKeyCodeHandler= proc(keyCode: int)
-  UnknownEscapeSequenceHandler= proc(escSeq: string)
+  UnknownKeyCodeHandler = proc(keyCode: int)
+  UnknownEscSeqHandler = proc(escSeq: string)
+ 
 
-  
-var
-  handleUnknownKeyCode: UnknownKeyCodeHandler = nil
-  handleUnknownEscapeSequence: UnknownEscapeSequenceHandler = nil
-
-
-proc onUnknownKeyCode*(handler: UnknownKeyCodeHandler) = 
-  handleUnknownKeyCode = handler
-
-
-proc onUnknownEscapeSequence*(handler: UnknownEscapeSequenceHandler) = 
-  handleUnknownEscapeSequence = handler
-
-
-proc tryToKey(keyCode: int): Option[Key] =
+proc tryToKey(keyCode: int, handler: UnknownKeyCodeHandler = nil): Option[Key] =
   try:
     {.push warning[HoleEnumConv]: off.}
     result = some(Key(keyCode))
     {.pop.}
   except RangeDefect:
-    if not handleUnknownKeyCode.isNil:
-      handleUnknownKeyCode(keyCode)
+    if not handler.isNil:
+      handler(keyCode)
 
     result = none(Key)
 
@@ -307,8 +294,19 @@ var defaultKeyEscSeqTable*: KeyEscapeSequenceTable = {
 }.toTable
 
 
-proc tryGetKey*(escSeqTable: KeyEscapeSequenceTable = defaultKeyEscSeqTable): Option[Key] = 
-  let ret = tryReadKeySequence()
+proc getKeyWrapperOrDie(keyCode: int, keyCodeHandler: UnknownKeyCodeHandler): Option[Key] = 
+  result = tryToKey(keyCode, keyCodeHandler)
+  doAssert result.isSome, "Fatal: Failed to convert known escape sequence to key"
+
+
+proc tryGetKey*(
+  timeout, escSeqTimeout: Milliseconds,
+  escSeqTable: KeyEscapeSequenceTable = defaultKeyEscSeqTable,
+  keyCodeHandler: UnknownKeyCodeHandler = nil,
+  escSeqHandler: UnknownEscSeqHandler = nil
+): Option[Key] = 
+
+  let ret = tryReadKeySequence(timeout, escSeqTimeout)
 
   if ret.isNone:
     result = none(Key)
@@ -316,44 +314,35 @@ proc tryGetKey*(escSeqTable: KeyEscapeSequenceTable = defaultKeyEscSeqTable): Op
   else:
     let escSeq = ret.get
 
-    var k: Option[Key] = none(Key)
-
     case escSeq.len:
     of 1:
-      k = tryToKey(int(escSeq[0]))
-      doAssert k.isSome, "Fatal: Failed to convert known escape sequence to key"
-      result = some(k.get)
+      result = getKeyWrapperOrDie(int(escSeq[0]), keyCodeHandler)
+
     of 2:
       if escSeq[0] == '\e':
         if escSeq[1] in 'a' .. 'z':
           let keyCode = ord(escSeq[1]) - ord('a') + ord(Key.AltA)
+          result = getKeyWrapperOrDie(keyCode, keyCodeHandler)
 
-          k = tryToKey(keyCode)
-          doAssert k.isSome, "Fatal: Failed to convert known escape sequence to key"
-          result = some(k.get)
         elif escSeq[1] in 'A' .. 'Z':
           let keyCode = ord(escSeq[1]) - ord('A') + ord(Key.AltShiftA)
-          k = tryToKey(keyCode)
-          doAssert k.isSome, "Fatal: Failed to convert known escape sequence to key"
-          result = some(k.get)
-      
+          result = getKeyWrapperOrDie(keyCode, keyCodeHandler)
+
     else:
       for key, value in escSeqTable:
         if escSeq in value:
-          k = some(key)
           result = some(key)
           break
 
-    if escSeq.len > 0 and k.isNone:
-      result = none(Key)
-      if not handleUnknownEscapeSequence.isNil:
-        handleUnknownEscapeSequence(escSeq)
+    if escSeq.len > 0 and result.isNone:
+      if not escSeqHandler.isNil:
+        escSeqHandler(escSeq)
 
 
 when isMainModule:
   proc getPressedKeysDemo() = 
     while true:
-      let op = tryGetKey()
+      let op = tryGetKey(100, 10)
       if op.isSome:
         let key = op.get
         stdout.write(key, "\r\n")
