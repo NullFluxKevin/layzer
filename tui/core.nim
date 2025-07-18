@@ -62,13 +62,12 @@ template runTuiApp*(isRunning: var bool, onResize: EventHandler, onKeyPress: Eve
             emitEvent(resizeEvent, ResizeContext(width: width, height: height))
             hasResized = false
 
-        block emitKeyEvents:
-          let keys = getPressedKeys()
-          if keys.len > 0:
-            for key in keys:
-              emitEvent(keyEvent, KeyContext(key: key))
-
-          
+        block emitKeyEvent:
+          let ret = tryGetKey()
+          if ret.isSome:
+            let key = ret.get
+            emitEvent(keyEvent, KeyContext(key: key))
+            
 
         handleEvents()
 

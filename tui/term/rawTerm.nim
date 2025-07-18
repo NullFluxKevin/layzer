@@ -10,12 +10,10 @@ import selectWrapper
 const
   defaultReadTimeout = 100
   defaultEscSequenceReadTimeout = 10
-  defaultMaxInputBufLen = 100
 
 
 type
-  ReadTimeout* = distinct int
-  InputBuffer* = seq[string]
+  KeySequence* = string
 
 
 const stdinFDSet = block:
@@ -128,29 +126,26 @@ proc tryReadByte*(timeoutMS: int = defaultReadTimeout): Option[char] =
     elif numBytesRead == -1:
       doAssert errno == EAGAIN, "Fatal: Failed to read from stdin"
       result = none(char)
-    
 
-proc readPendingInput*(maxBufLen: Positive = defaultMaxInputBufLen): InputBuffer = 
-  while result.len < maxBufLen:
-    let ret = tryReadByte()
-    if ret.isSome:
-      let ch = ret.get
-      if ch == '\e':
-        var escapeSequence = ""
-        escapeSequence.add(ch)
 
-        var r = tryReadByte(defaultEscSequenceReadTimeout)
-        while r.isSome:
-          escapeSequence.add(r.get)
-          r = tryReadByte(defaultEscSequenceReadTimeout)
+proc tryReadKeySequence*(): Option[KeySequence] = 
+  result = none(KeySequence)
 
-        result.add(escapeSequence)
+  let ret = tryReadByte()
+  if ret.isSome:
+    let ch = ret.get
+    if ch == '\e':
+      var escapeSequence = ""
+      escapeSequence.add(ch)
 
-      else:
-        result.add($ret.get)
+      var r = tryReadByte(defaultEscSequenceReadTimeout)
+      while r.isSome:
+        escapeSequence.add(r.get)
+        r = tryReadByte(defaultEscSequenceReadTimeout)
+      result = some(escapeSequence)
 
     else:
-      break
+      result = some($ret.get)
 
 
 when isMainModule:
@@ -159,11 +154,12 @@ when isMainModule:
     echo "Press a key to see it's bytes. Press q to quit"
     withRawMode:
       while true:
-        let buffer = readPendingInput()
-        if buffer.len != 0:
-          stdout.write(repr(buffer), "\r\n")
-          if "q" in buffer:
-            break
+          let op = tryReadKeySequence()
+          if op.isSome:
+            let keySeq = op.get
+            stdout.write(repr(keySeq), "\r\n")
+            if keySeq == "q":
+              break
 
   showRawInputBytes()
 

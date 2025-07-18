@@ -307,18 +307,22 @@ var defaultKeyEscSeqTable*: KeyEscapeSequenceTable = {
 }.toTable
 
 
-proc getPressedKeys*(maxBufLen: int = 100, escSeqTable: KeyEscapeSequenceTable = defaultKeyEscSeqTable): seq[Key] = 
+proc tryGetKey*(escSeqTable: KeyEscapeSequenceTable = defaultKeyEscSeqTable): Option[Key] = 
+  let ret = tryReadKeySequence()
 
-  let buffer = readPendingInput(maxBufLen)
+  if ret.isNone:
+    result = none(Key)
 
-  for escSeq in buffer:
+  else:
+    let escSeq = ret.get
+
     var k: Option[Key] = none(Key)
 
     case escSeq.len:
     of 1:
       k = tryToKey(int(escSeq[0]))
       doAssert k.isSome, "Fatal: Failed to convert known escape sequence to key"
-      result.add(k.get)
+      result = some(k.get)
     of 2:
       if escSeq[0] == '\e':
         if escSeq[1] in 'a' .. 'z':
@@ -326,31 +330,34 @@ proc getPressedKeys*(maxBufLen: int = 100, escSeqTable: KeyEscapeSequenceTable =
 
           k = tryToKey(keyCode)
           doAssert k.isSome, "Fatal: Failed to convert known escape sequence to key"
-          result.add(k.get)
+          result = some(k.get)
         elif escSeq[1] in 'A' .. 'Z':
           let keyCode = ord(escSeq[1]) - ord('A') + ord(Key.AltShiftA)
           k = tryToKey(keyCode)
           doAssert k.isSome, "Fatal: Failed to convert known escape sequence to key"
-          result.add(k.get)
+          result = some(k.get)
       
     else:
       for key, value in escSeqTable:
         if escSeq in value:
           k = some(key)
-          result.add(key)
+          result = some(key)
           break
 
-    if escSeq.len > 0 and k.isNone and not handleUnknownEscapeSequence.isNil:
-      handleUnknownEscapeSequence(escSeq)
+    if escSeq.len > 0 and k.isNone:
+      result = none(Key)
+      if not handleUnknownEscapeSequence.isNil:
+        handleUnknownEscapeSequence(escSeq)
 
 
 when isMainModule:
   proc getPressedKeysDemo() = 
     while true:
-      let keys = getPressedKeys()
-      if keys.len > 0:
-        stdout.write(keys, "\r\n")
-        if Key.Q in keys:
+      let op = tryGetKey()
+      if op.isSome:
+        let key = op.get
+        stdout.write(key, "\r\n")
+        if key == Key.Q:
           break
 
     
