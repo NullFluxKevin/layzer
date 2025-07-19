@@ -248,8 +248,8 @@ type
 
 
 type
-  UnknownKeyCodeHandler = proc(keyCode: int)
-  UnknownEscSeqHandler = proc(escSeq: string)
+  UnknownKeyCodeHandler* = proc(keyCode: int)
+  UnknownEscSeqHandler* = proc(escSeq: string)
  
 
 proc tryToKey(keyCode: int, handler: UnknownKeyCodeHandler = nil): Option[Key] =
@@ -265,7 +265,7 @@ proc tryToKey(keyCode: int, handler: UnknownKeyCodeHandler = nil): Option[Key] =
 
 
 type 
-  KeyEscapeSequenceTable = Table[Key, seq[string]]
+  KeyEscapeSequenceTable* = Table[Key, seq[string]]
 
 
 var defaultKeyEscSeqTable*: KeyEscapeSequenceTable = {
