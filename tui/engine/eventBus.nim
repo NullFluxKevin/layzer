@@ -19,13 +19,14 @@ var
   eventBus = EventBus()
   eventQueue = EventQueue()
 
+eventQueue.open
+# not closed ever, let OS clean up after the process exits
+  
 
-template withEventQueue*(body: untyped) = 
-  try:
-    eventQueue.open
-    body
-  finally:
-    eventQueue.close
+proc closeEventQueue*() = 
+  # May not be necessary, but you can do it before quitting the app
+  eventQueue.close
+
 
 proc tryGetEvent*(): Option[EventInfo] =
   let recv = eventQueue.tryRecv()
@@ -34,6 +35,15 @@ proc tryGetEvent*(): Option[EventInfo] =
   else:
     result = none(EventInfo)
     
+
+iterator pollEvents*(): EventInfo = 
+  while true:
+    let eventInfo = tryGetEvent()
+    if eventInfo.isNone:
+      break
+
+    yield eventInfo.get
+      
 
 proc invoke*(e: Event, ctx: EventContext) =
   for handler in e.handlers:
@@ -60,4 +70,43 @@ proc emitEvent*(event: string, ctx: EventContext) =
   eventQueue.send((toBeEmitted, ctx))
  
 
-# TODO: demo for this module, without involving other modules
+when isMainModule:
+
+  # To define and register a custom event, you will need:
+  # 1. A unique event name
+  # 2. A custom event context sub-type for passing values to event handler(s)
+  # 3. To define event handler(s) for the event
+  # 4. To register the event on the event bus with onEvent()
+   
+  const customEvent = "customEvent"
+
+  type CustomEventContext = ref object of EventContext
+    msg: string
+
+  proc customHandler(ctx: EventContext) =
+    # Every handler must test and down cast ctx to the correct context type
+    if not (ctx of CustomEventContext):
+      return
+    let customCtx = CustomEventContext(ctx)
+
+
+    echo("Custom event message: ", customCtx.msg)
+
+
+  # Every event MUST be registered before it could be used
+  onEvent(customEvent, customHandler)
+
+
+  # To emit an event, simply call emitEvent().
+  # Events to be emitted MUST already be registered to the event bus.
+  for i in 1..10:
+    emitEvent(customEvent, CustomEventContext(msg: "Hello " & $i))
+
+
+  # To handle events, you need to get them out from the event queue first.
+  for eventInfo in pollEvents():
+    let
+      event = eventInfo.e
+      context = eventInfo.ctx
+
+    event.invoke(context)
