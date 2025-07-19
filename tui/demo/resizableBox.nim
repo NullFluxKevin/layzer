@@ -72,7 +72,7 @@ when isMainModule:
   hideCursor()
   drawBox()
 
-  runTuiApp(isRunning, onResize, onKeyPress):
+  let tuiConfig = initTuiConfig()
+  runTuiApp(tuiConfig, isRunning, onResize, onKeyPress):
     discard
-  
-  
+    

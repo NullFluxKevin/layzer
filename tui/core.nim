@@ -22,12 +22,34 @@ type
   KeyContext* = ref object of EventContext
     key*: Key
 
+  TuiConfig* = object
+    timeout*: Milliseconds
+    escSeqTimeout*: Milliseconds
+    keyEscSeqTable*: KeyEscapeSequenceTable
+    unknownKeyCodeHandler*: UnknownKeyCodeHandler
+    unknownEscSeqHandler*: UnknownEscSeqHandler
+    
+
+proc initTuiConfig*(
+  timeout: Milliseconds = 100,
+  escSeqTimeout: Milliseconds = 10,
+  keyEscSeqTable: KeyEscapeSequenceTable = defaultKeyEscSeqTable,
+  unknownKeyCodeHandler: UnknownKeyCodeHandler = nil,
+  unknownEscSeqHandler: UnknownEscSeqHandler = nil
+): TuiConfig =
+
+  TuiConfig(
+    timeout: timeout,
+    escSeqTimeout: escSeqTimeout,
+    keyEscSeqTable: keyEscSeqTable,
+    unknownKeyCodeHandler: unknownKeyCodeHandler,
+    unknownEscSeqHandler: unknownEscSeqHandler
+  )
+
 
 proc handleEvents*() = 
-  let eventInfo = tryGetEvent()
-  if eventInfo.isSome:
-    let ei = eventInfo.get
-    let (e, ctx) = (ei.e, ei.ctx)
+  for eventInfo in pollEvents():
+    let (e, ctx) = (eventInfo.e, eventInfo.ctx)
     e.invoke(ctx)
 
 
@@ -35,7 +57,11 @@ template println*(content: varargs[untyped, `$`]) =
   stdout.write(content, "\r\n")
 
 
-template runTuiApp*(isRunning: var bool, onResize: EventHandler, onKeyPress: EventHandler, body: untyped) = 
+template println*() =
+  stdout.write("\r\n")
+
+
+template runTuiApp*(tuiConfig: TuiConfig, isRunning: var bool, onResize: EventHandler, onKeyPress: EventHandler, body: untyped) = 
 
   onEvent(keyEvent, onKeyPress)
 
@@ -50,28 +76,34 @@ template runTuiApp*(isRunning: var bool, onResize: EventHandler, onKeyPress: Eve
   onEvent(resizeEvent, onResize)
 
   withRawMode:
-    withEventQueue:
 
-      while isRunning:
-        block emitResizeEvent:
-          if hasResized:
-            var
-              width = terminalWidth()
-              height = terminalHeight()
+    while isRunning:
+      block emitResizeEvent:
+        if hasResized:
+          var
+            width = terminalWidth()
+            height = terminalHeight()
 
-            emitEvent(resizeEvent, ResizeContext(width: width, height: height))
-            hasResized = false
+          emitEvent(resizeEvent, ResizeContext(width: width, height: height))
+          hasResized = false
 
-        block emitKeyEvent:
-          let ret = tryGetKey()
-          if ret.isSome:
-            let key = ret.get
-            emitEvent(keyEvent, KeyContext(key: key))
-            
+      block emitKeyEvent:
+        let ret = tryGetKey(
+          tuiConfig.timeout,        
+          tuiConfig.escSeqTimeout,        
+          tuiConfig.keyEscSeqTable,        
+          tuiConfig.unknownKeyCodeHandler,        
+          tuiConfig.unknownEscSeqHandler,        
+        )
 
-        handleEvents()
+        if ret.isSome:
+          let key = ret.get
+          emitEvent(keyEvent, KeyContext(key: key))
+          
 
-        body
+      handleEvents()
+
+      body
 
 
 when isMainModule:
@@ -105,6 +137,7 @@ when isMainModule:
   proc main() =
     discard
 
-  runTuiApp(isRunning, onResize, onKeyPress):
+  let tuiConfig = initTuiConfig()
+  runTuiApp(tuiConfig, isRunning, onResize, onKeyPress):
     main()
   
