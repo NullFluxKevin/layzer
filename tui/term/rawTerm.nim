@@ -3,17 +3,18 @@
 import posix
 import termios
 import options
+import sets
 
-import selectWrapper
-
-export Milliseconds
 
 var
   isRawModeEnabled = false
   origAttr: Termios
+  
 
 type
   KeySequence* = string
+  FileDescriptorSet = HashSet[cint]
+  Milliseconds* = Natural
 
 
 const stdinFDSet = block:
@@ -22,13 +23,41 @@ const stdinFDSet = block:
   fdSet
 
 
+# This sections is just the expanded kbhit proc of illwill with more names for future me to understand better what's going on
+# https://github.com/johnnovak/illwill/blob/99a120f7f69868b94f5d35ce7e21dd12535de70c/illwill.nim#L550
+proc toTimeval(duration: Milliseconds): Timeval =
+  result.tv_sec = Time(duration div 1000)
+  result.tv_usec = 1000 * (duration mod 1000)
+  
+
+proc makeSelectArgs(fdSet: FileDescriptorSet): tuple[fds: TFdSet, maxFd: cint] =
+  FD_ZERO(result.fds)  # initialize
+
+  result.maxFd = -1
+
+  for fd in fdSet:
+    FD_SET(fd, result.fds) # add to the file descriptor set
+    if fd > result.maxFd:
+      result.maxFd = fd
+
+
+proc getReadyToReadFds(timeout: Milliseconds, readFds: FileDescriptorSet): FileDescriptorSet = 
+  let tv = toTimeval(timeout)
+  var (fds, maxFd) = makeSelectArgs(readFds)
+  discard select(maxFd + 1, addr fds, nil, nil, addr tv)
+  for fd in readFds:
+    if FD_ISSET(fd, fds) != 0:
+      result.incl(fd)
+
+
 proc isStdinReady*(timeout: Milliseconds): bool =
 
   doAssert isRawModeEnabled, "Error: Please enable raw terminal mode first using the enableRawMode proc or the withRawMode template."
 
   let readyFds = getReadyToReadFds(timeout, stdinFDSet)
   readyFds.contains(STDIN_FILENO)
-    
+# expanded kbhit section end
+
 
 proc getTermCtrlAttr(): Termios = 
   let ret = tcGetAttr(STDIN_FILENO, addr result)
@@ -38,8 +67,6 @@ proc getTermCtrlAttr(): Termios =
 proc setTermCtrlAttr(term: Termios) = 
   let ret = tcSetAttr(STDIN_FILENO, TCSAFLUSH, addr term)
   doAssert ret == 0, "Fatal: Failed to set terminal attributes"
-
-
 
 
 proc disableControlFlag(flag: var Cflag, mask: Cflag) =
@@ -177,5 +204,3 @@ when isMainModule:
 
   showRawInputBytes()
 
-      
-  
