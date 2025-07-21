@@ -50,6 +50,15 @@ proc invoke*(e: Event, ctx: EventContext) =
     handler(ctx)
 
 
+proc invoke*(eventInfo: EventInfo) =
+  let
+    event = eventInfo.e
+    context = eventInfo.ctx
+
+  for handler in event.handlers:
+    handler(context)
+
+
 proc onEvent*(event: string, handler: EventHandler) = 
   # Table value gotcha:
   # if your value is of value type, then modification after assignment such as
