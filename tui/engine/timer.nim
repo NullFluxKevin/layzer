@@ -18,14 +18,17 @@ type
   TimerRegistry = Table[TimerID, proc()]
   TimerEventQueue = Channel[TimerID]
   TimerHandler = proc()
+  TimerQueue = HeapQueue[Timer]
 
   TimerLoopCommandKind = enum
-    tlckCancel
+    tlckCancel, tlckAddTimer
 
   TimerLoopCommand = object
     case kind: TimerLoopCommandKind
     of tlckCancel:
       id: TimerID
+    of tlckAddTimer:
+      timer: Timer
 
   CommandChannel = Channel[TimerLoopCommand]
 
@@ -66,6 +69,16 @@ proc registerTimer(registry: var TimerRegistry, timerID: TimerID, handler: Timer
 proc cancelTimer(id: TimerID) = 
   cmdCh.send(TimerLoopCommand(kind: tlckCancel, id: id))
 
+proc addTimer(timer: Timer) = 
+  cmdCh.send(TimerLoopCommand(kind: tlckAddTimer, timer: timer))
+
+
+proc add(timerQueue: var TimerQueue, newTimer: Timer) =
+  var timer = newTimer
+  doAssert minIntervalAllowed <= timer.interval, "Fatal: Intervals smaller than 1ms are not allowed."
+  timer.due = getTime() + timer.interval
+  timerQueue.push(timer)
+
 
 proc startTimers(timers: seq[Timer]) {.thread.} = 
 
@@ -74,9 +87,7 @@ proc startTimers(timers: seq[Timer]) {.thread.} =
     pendingCancellations = HashSet[TimerID]()
 
   for timer in timers:
-    doAssert minIntervalAllowed <= timer.interval, "Fatal: Intervals smaller than 1ms are not allowed."
-    timer.due = getTime() + timer.interval
-    timerQueue.push(timer)
+    timerQueue.add(timer)
 
 
   while true:
@@ -112,6 +123,9 @@ proc startTimers(timers: seq[Timer]) {.thread.} =
       case cmd.kind:
       of tlckCancel:
         pendingCancellations.incl(cmd.id)
+      of tlckAddTimer:
+        let newTimer = cmd.timer
+        timerQueue.add(newTimer)
 
     timerEventQueue.send(nextTimer.id)
 
@@ -131,6 +145,12 @@ when isMainModule:
 
   proc toBeCancelledTimerHandler() =
     doAssert false, "Fatal: The timer is supposed to be cancelled and never be triggered"
+
+  proc runtimeOneShotHandler() =
+    echo "One-shot timer added at runtime triggered"
+
+  proc runtimeHandler() = 
+    echo "Recurring timer added at runtime triggered"
   
   var timerRegistry = TimerRegistry()
 
@@ -155,6 +175,17 @@ when isMainModule:
   # This behavior is by design: control commands are part of the running timer system, and cannot take effect before it begins.
   cancelTimer(toBeCancelledTimer.id)
 
+  let
+    runtimeOneShotTimer = initTimer(initDuration(seconds=5), true)
+    runtimeTimer = initTimer(initDuration(seconds=3), false)
+
+  # future API clean up: accept timer and access the .id in proc body
+  timerRegistry.registerTimer(runtimeOneShotTimer.id, runtimeOneShotHandler)
+  timerRegistry.registerTimer(runtimeTimer.id, runtimeHandler)
+
+  addTimer(runtimeOneShotTimer)
+  addTimer(runtimeTimer)
+
   var timerCounter = 0
   while true:
     for timerID in pollTimerID():
@@ -164,7 +195,7 @@ when isMainModule:
     # pretend to do useful work
     sleep(500)
 
-    if timerCounter > 10:
+    if timerCounter > 20:
       break
 
   # This is how we signal the timer thread to stop the loop
