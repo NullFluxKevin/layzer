@@ -4,8 +4,6 @@ import times
 import tables
 
 
-var idCounter = 0
- 
 type
   TimerID = Natural
 
@@ -23,6 +21,11 @@ type
 
 var
   timerEventQueue = TimerEventQueue()
+  idCounter = 0
+
+
+const
+  minIntervalAllowed = initDuration(milliseconds=1)
 
 
 proc `<`(a, b: Timer): bool = a.due < b.due
@@ -52,25 +55,23 @@ proc startTimers(timers: seq[Timer]) {.thread.} =
   var timerQueue = initHeapQueue[Timer]()
 
   for timer in timers:
-
+    doAssert minIntervalAllowed <= timer.interval, "Fatal: Intervals smaller than 1ms are not allowed."
     timer.due = getTime() + timer.interval
     timerQueue.push(timer)
-
 
 
   while true:
     let
       nextTimer = timerQueue.pop()
       timeTilActivation = nextTimer.due - getTime()
-
-    doAssert DurationZero <= timeTilActivation, "Fatal: Timer due time is in the past. This may indicate host time drift or a bug in timer setup. " &
-    "Timer ID: " & $nextTimer.id & 
-    ", Due: " & $nextTimer.due & 
-    ", Now: " & $getTime() & 
-    ", Interval: " & $nextTimer.interval
+  
+    doAssert DurationZero < timeTilActivation, "Fatal: Timer due time is in the past. This may indicate host time drift or a bug in timer setup." &
+    "\nTimer ID: " & $nextTimer.id & 
+    "\nDue: " & $nextTimer.due & 
+    "\nNow: " & $getTime() & 
+    "\nInterval: " & $nextTimer.interval
 
       
-
     let milsecs = timeTilActivation.inMilliseconds
     sleep(milsecs)
 
@@ -84,6 +85,7 @@ proc startTimers(timers: seq[Timer]) {.thread.} =
     if not nextTimer.isOneShot:
       nextTimer.due = getTime() + nextTimer.interval
       timerQueue.push(nextTimer)
+
    
 
 when isMainModule:
@@ -95,7 +97,7 @@ when isMainModule:
 
   proc tick2SecsHandler() =
     echo "tick every 2 secs"
-    
+
   
   var timerRegistry = TimerRegistry()
 
@@ -125,5 +127,4 @@ when isMainModule:
   timerEventQueue.close
 
   joinThread(timerThread)
-      
 
