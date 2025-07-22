@@ -21,7 +21,7 @@ type
   TimerQueue = HeapQueue[Timer]
 
   TimerLoopCommandKind = enum
-    tlckCancel, tlckAddTimer
+    tlckCancel, tlckAddTimer, tlckShutdown
 
   TimerLoopCommand = object
     case kind: TimerLoopCommandKind
@@ -29,6 +29,8 @@ type
       id: TimerID
     of tlckAddTimer:
       timer: Timer
+    of tlckShutdown:
+      discard
 
   CommandChannel = Channel[TimerLoopCommand]
 
@@ -72,6 +74,15 @@ proc cancelTimer(id: TimerID) =
 proc addTimer(timer: Timer) = 
   cmdCh.send(TimerLoopCommand(kind: tlckAddTimer, timer: timer))
 
+proc shutdown() = 
+  #[
+    shutdown() gracefully terminates the timer system after the next due timer fires.
+    Any commands in the queue (e.g. cancel, add) are still processed.
+    No further timer events are scheduled.
+    Thread joins are expected to happen after shutdown to ensure full cleanup.
+  ]#
+  cmdCh.send(TimerLoopCommand(kind: tlckShutdown))
+
 
 proc add(timerQueue: var TimerQueue, newTimer: Timer) =
   var timer = newTimer
@@ -109,11 +120,7 @@ proc startTimers(timers: seq[Timer]) {.thread.} =
     let milsecs = timeTilActivation.inMilliseconds
     sleep(milsecs)
 
-    # Has to be checked AFTER the thread wakes up to prevent from sending to closed channel by race condition
-    let isTimerEventQueueClosed = timerEventQueue.peek == -1
-    if isTimerEventQueueClosed:
-      return
-
+    var shutdown = false
     while true:
       let recv = cmdCh.tryRecv
       if not recv.dataAvailable:
@@ -126,6 +133,9 @@ proc startTimers(timers: seq[Timer]) {.thread.} =
       of tlckAddTimer:
         let newTimer = cmd.timer
         timerQueue.add(newTimer)
+      of tlckShutdown:
+        shutdown = true
+       
 
     timerEventQueue.send(nextTimer.id)
 
@@ -133,6 +143,8 @@ proc startTimers(timers: seq[Timer]) {.thread.} =
       nextTimer.due = getTime() + nextTimer.interval
       timerQueue.push(nextTimer)
 
+    if shutdown:
+      break
    
 
 when isMainModule:
@@ -195,13 +207,13 @@ when isMainModule:
     # pretend to do useful work
     sleep(500)
 
-    if timerCounter > 20:
+    if timerCounter > 5:
+      shutdown()
       break
 
-  # This is how we signal the timer thread to stop the loop
-  timerEventQueue.close
-
-  cmdCh.close
+  # these are optional
+  # timerEventQueue.close
+  # cmdCh.close
 
   joinThread(timerThread)
 
