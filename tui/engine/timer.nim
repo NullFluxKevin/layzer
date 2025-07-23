@@ -33,6 +33,7 @@ type
       discard
 
   CommandChannel = Channel[TimerLoopCommand]
+  Millisecond = Natural
 
 
 var
@@ -50,7 +51,7 @@ const
 proc `<`(a, b: Timer): bool = a.due < b.due
 
 
-iterator pollTimerID(): TimerID = 
+iterator pollTimerIDs(): TimerID = 
   while true:
     let recv = timerEventQueue.tryRecv()
     if not recv.dataAvailable:
@@ -65,14 +66,23 @@ proc initTimer(interval: Duration, isOneShot: bool): Timer =
   Timer(id: timerID, isOneShot: isOneShot, interval: interval)
 
 
-proc registerTimer(registry: var TimerRegistry, timerID: TimerID, handler: TimerHandler) =
-  registry[timerID] = handler
+proc initTimer(interval: Millisecond, isOneShot: bool): Timer =
+  let timerID = idCounter
+  idCounter += 1
+  Timer(id: timerID, isOneShot: isOneShot, interval: initDuration(milliseconds= interval))
   
+  # initTimer(initDuration(milliseconds=interval), isOneShot)
+
+proc registerTimer(registry: var TimerRegistry, timer: Timer, handler: TimerHandler) =
+  registry[timer.id] = handler
+  
+
 proc cancelTimer(id: TimerID) = 
   cmdCh.send(TimerLoopCommand(kind: tlckCancel, id: id))
 
 proc addTimer(timer: Timer) = 
   cmdCh.send(TimerLoopCommand(kind: tlckAddTimer, timer: timer))
+
 
 proc shutdown() = 
   #[
@@ -149,11 +159,11 @@ proc startTimers(timers: seq[Timer]) {.thread.} =
 
 when isMainModule:
 
-  proc tick1SecHandler() =
-    echo "tick every 1 sec"
+  proc tick1Handler() =
+    echo "tick 1"
 
-  proc tick2SecsHandler() =
-    echo "tick every 2 secs"
+  proc tick2Handler() =
+    echo "tick 2"
 
   proc toBeCancelledTimerHandler() =
     doAssert false, "Fatal: The timer is supposed to be cancelled and never be triggered"
@@ -166,14 +176,14 @@ when isMainModule:
   
   var timerRegistry = TimerRegistry()
 
-  let tick1sec = initTimer(initDuration(seconds=1), false)
-  let tick2secs = initTimer(initDuration(seconds=2), false)
-  let toBeCancelledTimer = initTimer(initDuration(seconds=1, milliseconds=500), false)
+  let tick1 = initTimer(10, false)
+  let tick2 = initTimer(20, false)
+  let toBeCancelledTimer = initTimer(15, false)
 
-  timerRegistry.registerTimer(tick1sec.id, tick1SecHandler)
-  timerRegistry.registerTimer(tick2secs.id, tick2SecsHandler)
-  timerRegistry.registerTimer(toBeCancelledTimer.id, toBeCancelledTimerHandler)
-  var timers: seq[Timer] = @[tick1sec, tick2Secs, toBeCancelledTimer]
+  timerRegistry.registerTimer(tick1, tick1Handler)
+  timerRegistry.registerTimer(tick2, tick2Handler)
+  timerRegistry.registerTimer(toBeCancelledTimer, toBeCancelledTimerHandler)
+  var timers: seq[Timer] = @[tick1, tick2, toBeCancelledTimer]
 
   var timerThread: Thread[seq[Timer]]
   createThread(timerThread, startTimers, timers)
@@ -188,26 +198,26 @@ when isMainModule:
   cancelTimer(toBeCancelledTimer.id)
 
   let
-    runtimeOneShotTimer = initTimer(initDuration(seconds=5), true)
-    runtimeTimer = initTimer(initDuration(seconds=3), false)
+    runtimeOneShotTimer = initTimer(50, true)
+    runtimeTimer = initTimer(30, false)
 
   # future API clean up: accept timer and access the .id in proc body
-  timerRegistry.registerTimer(runtimeOneShotTimer.id, runtimeOneShotHandler)
-  timerRegistry.registerTimer(runtimeTimer.id, runtimeHandler)
+  timerRegistry.registerTimer(runtimeOneShotTimer, runtimeOneShotHandler)
+  timerRegistry.registerTimer(runtimeTimer, runtimeHandler)
 
   addTimer(runtimeOneShotTimer)
   addTimer(runtimeTimer)
 
   var timerCounter = 0
   while true:
-    for timerID in pollTimerID():
+    for timerID in pollTimerIDs():
       timerRegistry[timerID]()
       inc timerCounter
 
     # pretend to do useful work
-    sleep(500)
+    sleep(5)
 
-    if timerCounter > 5:
+    if timerCounter > 100:
       shutdown()
       break
 
