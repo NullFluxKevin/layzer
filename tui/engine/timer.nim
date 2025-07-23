@@ -35,8 +35,14 @@ type
   CommandChannel = Channel[TimerLoopCommand]
   Millisecond = Natural
 
+const
+  minIntervalAllowed = initDuration(milliseconds=1)
 
 var
+  # Acceptable timer trigger drift due to race conditions or OS scheduling delays.
+  # Matching minIntervalAllowed ensures we don't allow more than the shortest valid interval.
+  driftTolerance = initDuration(milliseconds=1)
+
   timerEventQueue = TimerEventQueue()
   idCounter = 0
   cmdCh = CommandChannel()
@@ -44,8 +50,6 @@ var
 timerEventQueue.open
 cmdCh.open
 
-const
-  minIntervalAllowed = initDuration(milliseconds=1)
 
 
 proc `<`(a, b: Timer): bool = a.due < b.due
@@ -119,16 +123,21 @@ proc startTimers(timers: seq[Timer]) {.thread.} =
       continue
 
     let timeTilActivation = nextTimer.due - getTime()
-  
-    doAssert DurationZero < timeTilActivation, "Fatal: Timer due time is in the past. This may indicate host time drift or a bug in timer setup." &
-    "\nTimer ID: " & $nextTimer.id & 
-    "\nDue: " & $nextTimer.due & 
-    "\nNow: " & $getTime() & 
-    "\nInterval: " & $nextTimer.interval
 
-      
-    let milsecs = timeTilActivation.inMilliseconds
-    sleep(milsecs)
+    let isDueInThePast = timeTilActivation < DurationZero
+
+    if isDueInThePast:
+
+      doAssert abs(timeTilActivation) <= driftTolerance, "Fatal: Timer due time is in the past. This may indicate host time drift or a bug in timer setup." &
+      "\nTimer ID: " & $nextTimer.id & 
+      "\nDue: " & $nextTimer.due & 
+      "\nNow: " & $getTime() & 
+      "\ntimeTilActivation: " & $timeTilActivation & 
+      "\nInterval: " & $nextTimer.interval
+
+    else:
+      let milsecs = timeTilActivation.inMilliseconds
+      sleep(milsecs)
 
     var shutdown = false
     while true:
