@@ -6,18 +6,18 @@ import sets
 
 
 type
-  TimerID = Natural
+  TimerID* = Natural
 
-  Timer = ref object
+  Timer* = ref object
     id: TimerID
     isOneShot: bool
     interval: Duration
     due: Time
 
+  TimerHandler* = proc()
+  TimerRegistry = Table[TimerID, TimerHandler]
 
-  TimerRegistry = Table[TimerID, proc()]
   TimerEventQueue = Channel[TimerID]
-  TimerHandler = proc()
   TimerQueue = HeapQueue[Timer]
 
   TimerLoopCommandKind = enum
@@ -33,29 +33,38 @@ type
       discard
 
   CommandChannel = Channel[TimerLoopCommand]
-  Millisecond = Natural
+  Millisecond* = Natural
+
 
 const
   minIntervalAllowed = initDuration(milliseconds=1)
 
+
 var
   # Acceptable timer trigger drift due to race conditions or OS scheduling delays.
   # Matching minIntervalAllowed ensures we don't allow more than the shortest valid interval.
-  driftTolerance = initDuration(milliseconds=1)
+  driftTolerance* = initDuration(milliseconds=1)
 
   timerEventQueue = TimerEventQueue()
-  idCounter = 0
+  idCounter: Natural = 0
   cmdCh = CommandChannel()
-
-timerEventQueue.open
-cmdCh.open
+  timerRegistry = TimerRegistry()
 
 
+proc initModule() = 
+  # DO NOT CLOSE THE CHANNELS.
+  # RACE CONDITION WILL MOST LIKELY TO CAUSE SENDING TO CLOSED TIMER CHANNEL EVEN WITH FLUSING CHANNELS BEFORE CLOSING AND CHECKING IF THE CHANNEL IS CLOSED AND CHECKING THE SHUTDOWN FLAG BEFORE SENDING.
+  timerEventQueue.open
+  cmdCh.open
 
+initModule()
+
+
+# For heapqueue to compare timers
 proc `<`(a, b: Timer): bool = a.due < b.due
 
 
-iterator pollTimerIDs(): TimerID = 
+iterator pollTimerIDs*(): TimerID = 
   while true:
     let recv = timerEventQueue.tryRecv()
     if not recv.dataAvailable:
@@ -64,31 +73,55 @@ iterator pollTimerIDs(): TimerID =
     yield recv.msg
 
 
-proc initTimer(interval: Duration, isOneShot: bool): Timer =
+proc activate*(timerID: TimerID) = 
+  doAssert timerID in timerRegistry, "Error: Timer is not registered. Timer ID: " & $timerID
+  timerRegistry[timerID]()
+
+
+proc processActivatedTimers*(): Natural =
+  for timerID in pollTimerIDs():
+    activate(timerID)
+    inc result
+
+  
+proc initTimer*(interval: Duration, isOneShot: bool): Timer =
+  doAssert idCounter <= high(TimerID), "Fatal: Timer ID exhausted. The system is not designed to be long-running to handle this many timers: " & $idCounter
   let timerID = idCounter
   idCounter += 1
   Timer(id: timerID, isOneShot: isOneShot, interval: interval)
 
 
-proc initTimer(interval: Millisecond, isOneShot: bool): Timer =
-  let timerID = idCounter
-  idCounter += 1
-  Timer(id: timerID, isOneShot: isOneShot, interval: initDuration(milliseconds= interval))
-  
-  # initTimer(initDuration(milliseconds=interval), isOneShot)
-
-proc registerTimer(registry: var TimerRegistry, timer: Timer, handler: TimerHandler) =
-  registry[timer.id] = handler
+proc initTimer*(interval: Millisecond, isOneShot: bool): Timer =
+  initTimer(initDuration(milliseconds= interval), isOneShot)
   
 
-proc cancelTimer(id: TimerID) = 
-  cmdCh.send(TimerLoopCommand(kind: tlckCancel, id: id))
+proc every*(interval: Duration, handler: TimerHandler): Timer = 
+  result = initTimer(interval, false)
+  timerRegistry[result.id] = handler
 
-proc addTimer(timer: Timer) = 
+
+proc every*(interval: Millisecond, handler: TimerHandler): Timer = 
+  every(initDuration(milliseconds=interval), handler)
+
+
+proc once*(countdown: Duration, handler: TimerHandler): Timer = 
+  result = initTimer(countdown, true)
+  timerRegistry[result.id] = handler
+
+
+proc once*(countdown: Millisecond, handler: TimerHandler): Timer = 
+  once(initDuration(milliseconds=countdown), handler)
+
+
+proc cancelTimer*(timer: Timer) = 
+  cmdCh.send(TimerLoopCommand(kind: tlckCancel, id: timer.id))
+
+
+proc addTimer*(timer: Timer) = 
   cmdCh.send(TimerLoopCommand(kind: tlckAddTimer, timer: timer))
 
 
-proc shutdown() = 
+proc shutdown*() = 
   #[
     shutdown() gracefully terminates the timer system after the next due timer fires.
     Any commands in the queue (e.g. cancel, add) are still processed.
@@ -98,21 +131,30 @@ proc shutdown() =
   cmdCh.send(TimerLoopCommand(kind: tlckShutdown))
 
 
-proc add(timerQueue: var TimerQueue, newTimer: Timer) =
+template withTimers*(timers: seq[Timer], body: untyped) =
+  var timerThread: Thread[seq[Timer]]
+  createThread(timerThread, startTimers, timers)
+
+  body
+
+  joinThread(timerThread)
+  
+
+proc scheduleInternal(timerQueue: var TimerQueue, newTimer: Timer) =
   var timer = newTimer
   doAssert minIntervalAllowed <= timer.interval, "Fatal: Intervals smaller than 1ms are not allowed."
   timer.due = getTime() + timer.interval
   timerQueue.push(timer)
 
 
-proc startTimers(timers: seq[Timer]) {.thread.} = 
+proc startTimers*(timers: seq[Timer]) {.thread.} = 
 
   var
     timerQueue = initHeapQueue[Timer]()
     pendingCancellations = HashSet[TimerID]()
 
   for timer in timers:
-    timerQueue.add(timer)
+    timerQueue.scheduleInternal(timer)
 
 
   while true:
@@ -136,8 +178,7 @@ proc startTimers(timers: seq[Timer]) {.thread.} =
       "\nInterval: " & $nextTimer.interval
 
     else:
-      let milsecs = timeTilActivation.inMilliseconds
-      sleep(milsecs)
+      sleep(timeTilActivation.inMilliseconds)
 
     var shutdown = false
     while true:
@@ -151,7 +192,7 @@ proc startTimers(timers: seq[Timer]) {.thread.} =
         pendingCancellations.incl(cmd.id)
       of tlckAddTimer:
         let newTimer = cmd.timer
-        timerQueue.add(newTimer)
+        timerQueue.scheduleInternal(newTimer)
       of tlckShutdown:
         shutdown = true
        
@@ -183,56 +224,43 @@ when isMainModule:
   proc runtimeHandler() = 
     echo "Recurring timer added at runtime triggered"
   
-  var timerRegistry = TimerRegistry()
 
-  let tick1 = initTimer(10, false)
-  let tick2 = initTimer(20, false)
-  let toBeCancelledTimer = initTimer(15, false)
+  var timers = @[
+    every(10, tick1Handler),
+    every(20, tick2Handler),
+  ]
 
-  timerRegistry.registerTimer(tick1, tick1Handler)
-  timerRegistry.registerTimer(tick2, tick2Handler)
-  timerRegistry.registerTimer(toBeCancelledTimer, toBeCancelledTimerHandler)
-  var timers: seq[Timer] = @[tick1, tick2, toBeCancelledTimer]
+  let toBeCancelledTimer = every(15, toBeCancelledTimerHandler)
+  timers.add(toBeCancelledTimer)
 
-  var timerThread: Thread[seq[Timer]]
-  createThread(timerThread, startTimers, timers)
+  withTimers(timers):
 
-  # The timer thread must be started before sending control commands.
-  # Commands (like cancellation) are only processed once the timer loop is running.
-  # 
-  # IMPORTANT:
-  # The effect of sending a cancellation command before the loop starts is *not* guaranteed, unless the target timer's due time is far enough in the future to allow the cancellation to be processed *before* the timer is activated.
-  # 
-  # This behavior is by design: control commands are part of the running timer system, and cannot take effect before it begins.
-  cancelTimer(toBeCancelledTimer.id)
+    # The timer thread must be started before sending control commands.
+    # Commands (like cancellation) are only processed once the timer loop is running.
+    # 
+    # IMPORTANT:
+    # The effect of sending a cancellation command before the loop starts is *not* guaranteed, unless the target timer's due time is far enough in the future to allow the cancellation to be processed *before* the timer is activated.
+    # 
+    # This behavior is by design: control commands are part of the running timer system, and cannot take effect before it begins.
+    cancelTimer(toBeCancelledTimer)
 
-  let
-    runtimeOneShotTimer = initTimer(50, true)
-    runtimeTimer = initTimer(30, false)
+    let
+      runtimeOneShotTimer = once(50, runtimeOneShotHandler)
+      runtimeTimer = every(30, runtimeHandler)
 
-  # future API clean up: accept timer and access the .id in proc body
-  timerRegistry.registerTimer(runtimeOneShotTimer, runtimeOneShotHandler)
-  timerRegistry.registerTimer(runtimeTimer, runtimeHandler)
+    addTimer(runtimeOneShotTimer)
+    addTimer(runtimeTimer)
 
-  addTimer(runtimeOneShotTimer)
-  addTimer(runtimeTimer)
 
-  var timerCounter = 0
-  while true:
-    for timerID in pollTimerIDs():
-      timerRegistry[timerID]()
-      inc timerCounter
+    var timerCounter = 0
+    while true:
+      let timersProcessed = processActivatedTimers()
+      timerCounter += timersProcessed
 
-    # pretend to do useful work
-    sleep(5)
+      # pretend to do useful work
+      sleep(5)
 
-    if timerCounter > 100:
-      shutdown()
-      break
-
-  # these are optional
-  # timerEventQueue.close
-  # cmdCh.close
-
-  joinThread(timerThread)
+      if timerCounter > 20:
+        shutdown()
+        break
 
