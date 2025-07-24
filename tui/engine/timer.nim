@@ -137,6 +137,7 @@ template withTimers*(timers: seq[Timer], body: untyped) =
 
   body
 
+  shutdown()
   joinThread(timerThread)
   
 
@@ -261,6 +262,5 @@ when isMainModule:
       sleep(5)
 
       if timerCounter > 20:
-        shutdown()
         break
 
