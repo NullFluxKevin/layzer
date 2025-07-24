@@ -44,6 +44,7 @@ var
   # Acceptable timer trigger drift due to race conditions or OS scheduling delays.
   # Matching minIntervalAllowed ensures we don't allow more than the shortest valid interval.
   driftTolerance* = initDuration(milliseconds=1)
+  idlePollInterval*: Millisecond = 50
 
   timerEventQueue = TimerEventQueue()
   idCounter: Natural = 0
@@ -159,27 +160,33 @@ proc startTimers*(timers: seq[Timer]) {.thread.} =
 
 
   while true:
-    let nextTimer = timerQueue.pop()
-
-    if pendingCancellations.contains(nextTimer.id):
-      pendingCancellations.excl(nextTimer.id)
-      continue
-
-    let timeTilActivation = nextTimer.due - getTime()
-
-    let isDueInThePast = timeTilActivation < DurationZero
-
-    if isDueInThePast:
-
-      doAssert abs(timeTilActivation) <= driftTolerance, "Fatal: Timer due time is in the past. This may indicate host time drift or a bug in timer setup." &
-      "\nTimer ID: " & $nextTimer.id & 
-      "\nDue: " & $nextTimer.due & 
-      "\nNow: " & $getTime() & 
-      "\ntimeTilActivation: " & $timeTilActivation & 
-      "\nInterval: " & $nextTimer.interval
-
+    var nextTimer: Timer = nil
+    if timerQueue.len == 0:
+      doAssert idlePollInterval >= 1, "Error: Poll interval must be at least 1ms"
+      sleep(idlePollInterval)
     else:
-      sleep(timeTilActivation.inMilliseconds)
+
+      nextTimer = timerQueue.pop()
+
+      if pendingCancellations.contains(nextTimer.id):
+        pendingCancellations.excl(nextTimer.id)
+        continue
+
+      let timeTilActivation = nextTimer.due - getTime()
+
+      let isDueInThePast = timeTilActivation < DurationZero
+
+      if isDueInThePast:
+
+        doAssert abs(timeTilActivation) <= driftTolerance, "Fatal: Timer due time is in the past. This may indicate host time drift or a bug in timer setup." &
+        "\nTimer ID: " & $nextTimer.id & 
+        "\nDue: " & $nextTimer.due & 
+        "\nNow: " & $getTime() & 
+        "\ntimeTilActivation: " & $timeTilActivation & 
+        "\nInterval: " & $nextTimer.interval
+
+      else:
+        sleep(timeTilActivation.inMilliseconds)
 
     var shutdown = false
     while true:
@@ -198,11 +205,12 @@ proc startTimers*(timers: seq[Timer]) {.thread.} =
         shutdown = true
        
 
-    timerEventQueue.send(nextTimer.id)
+    if not nextTimer.isNil:
+      timerEventQueue.send(nextTimer.id)
 
-    if not nextTimer.isOneShot:
-      nextTimer.due = getTime() + nextTimer.interval
-      timerQueue.push(nextTimer)
+      if not nextTimer.isOneShot:
+        nextTimer.due = getTime() + nextTimer.interval
+        timerQueue.push(nextTimer)
 
     if shutdown:
       break
