@@ -1,3 +1,55 @@
+#[
+# 
+# Timer Module — Usage Guide and Design Notes
+
+## ❯ Usage
+
+- **All timer creation must happen on the _main thread_**, including runtime-created timers.
+- **All timer control procs** — `cancelTimer`, `addTimer`, and `shutdown` — must also be called from the _main thread_.
+- **Timer callbacks are executed in the main thread**, so they can safely access main-thread data.
+
+- You may define timers up front or dynamically add them during runtime.
+
+- `driftTolerance` defines how much trigger drift (due to race conditions or OS scheduling delays) is acceptable.  
+  You may adjust this if your timers frequently fire off-time.
+
+- `idlePollInterval` controls how long the background thread sleeps when **no timers** are pending.  
+  Adjust this to tune responsiveness vs. CPU usage.
+
+---
+
+## ❯ Limitations & Assumptions
+
+- This timer system is designed to be driven by a **single-threaded main loop**.  
+  **No multithreaded access is supported.**
+
+- Timer IDs are generated via a module-global counter (`idCounter`) with no thread-safety guarantees.  
+  This is safe because **all timer creation must happen on the main thread**.
+
+- The **minimum allowed timer interval** is **1 millisecond**.  
+  Intervals below that will cause a runtime `doAssert` failure.
+
+- If you are starting and stopping the timer thread manually, the system must be **explicitly shut down** by calling `shutdown()` once you're done:
+  - This ensures the background thread exits cleanly.
+  - All pending control commands (`add`, `cancel`, etc.) are processed before shutdown completes.
+  - After shutdown, **no new timers will be scheduled**.
+  - You must `joinThread` after shutdown to ensure full cleanup.
+
+---
+
+## ❯ Control Command Timing Rules
+
+- The **timer loop must be running before you send any control commands**.
+- Commands sent *before* the loop starts are **not guaranteed to work**:
+  - Especially cancellation — if the timer fires before the cancel command is processed, it will still trigger.
+  - If you need guaranteed cancellation, ensure the timer’s `due` time is far enough in the future.
+
+- This behavior is **intentional**:  
+  control commands are part of the live timer system, and are not processed before it begins.
+
+]#
+
+
 import os
 import heapqueue
 import times
@@ -123,12 +175,6 @@ proc addTimer*(timer: Timer) =
 
 
 proc shutdown*() = 
-  #[
-    shutdown() gracefully terminates the timer system after the next due timer fires.
-    Any commands in the queue (e.g. cancel, add) are still processed.
-    No further timer events are scheduled.
-    Thread joins are expected to happen after shutdown to ensure full cleanup.
-  ]#
   cmdCh.send(TimerLoopCommand(kind: tlckShutdown))
 
 
@@ -244,13 +290,6 @@ when isMainModule:
 
   withTimers(timers):
 
-    # The timer thread must be started before sending control commands.
-    # Commands (like cancellation) are only processed once the timer loop is running.
-    # 
-    # IMPORTANT:
-    # The effect of sending a cancellation command before the loop starts is *not* guaranteed, unless the target timer's due time is far enough in the future to allow the cancellation to be processed *before* the timer is activated.
-    # 
-    # This behavior is by design: control commands are part of the running timer system, and cannot take effect before it begins.
     cancelTimer(toBeCancelledTimer)
 
     let
