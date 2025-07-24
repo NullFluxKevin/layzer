@@ -5,8 +5,9 @@ import options
 import tui/term/rawTerm
 import tui/term/keyInput
 import tui/engine/eventBus
+import tui/engine/timer
 
-export rawTerm, keyInput, eventBus
+export rawTerm, keyInput, eventBus, timer
 
 
 const
@@ -108,7 +109,9 @@ template runTuiApp*(tuiConfig: TuiConfig, isRunning: var bool, onResize: EventHa
 
 when isMainModule:
 
-  var isRunning = true
+  var
+    isRunning = true
+    keyPressCount = 0
 
   proc onKeyPress(ctx: EventContext) =
     if not (ctx of KeyContext):
@@ -118,6 +121,8 @@ when isMainModule:
     let key = c.key
     println("Key: ", key)
     
+    inc keyPressCount
+
     if key == Key.Q or key == Key.CtrlC:
       println("Exiting...")
       isRunning = false
@@ -130,14 +135,22 @@ when isMainModule:
     let c = ResizeContext(ctx)
     println("width: ", c.width, "; height: ", c.height)
 
+
+  proc reportKeyPerSec() = 
+    println("Key pressed in the last second: ", keyPressCount)
+    keyPressCount = 0
+
     
   println("Press keys and resize terminal to test related events.")
   println("Press Q or Ctrl-C to quit.")
 
-  proc main() =
-    discard
+  let timers = @[
+    every(1000, reportKeyPerSec)
+  ]
 
   let tuiConfig = initTuiConfig()
-  runTuiApp(tuiConfig, isRunning, onResize, onKeyPress):
-    main()
+  withTimers(timers):
+    runTuiApp(tuiConfig, isRunning, onResize, onKeyPress):
+      discard processActivatedTimers()
+      # do other work
   
