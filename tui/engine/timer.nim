@@ -137,19 +137,19 @@ proc processActivatedTimers*(): Natural =
     inc result
 
   
-proc initTimer*(interval: Duration, isOneShot: bool): Timer =
+proc newTimer*(interval: Duration, isOneShot: bool): Timer =
   doAssert idCounter <= high(TimerID), "Fatal: Timer ID exhausted. The system is not designed to be long-running to handle this many timers: " & $idCounter
   let timerID = idCounter
   idCounter += 1
   Timer(id: timerID, isOneShot: isOneShot, interval: interval)
 
 
-proc initTimer*(interval: Millisecond, isOneShot: bool): Timer =
-  initTimer(initDuration(milliseconds= interval), isOneShot)
+proc newTimer*(interval: Millisecond, isOneShot: bool): Timer =
+  newTimer(initDuration(milliseconds= interval), isOneShot)
   
 
 proc every*(interval: Duration, handler: TimerHandler): Timer = 
-  result = initTimer(interval, false)
+  result = newTimer(interval, false)
   timerRegistry[result.id] = handler
 
 
@@ -158,7 +158,7 @@ proc every*(interval: Millisecond, handler: TimerHandler): Timer =
 
 
 proc once*(countdown: Duration, handler: TimerHandler): Timer = 
-  result = initTimer(countdown, true)
+  result = newTimer(countdown, true)
   timerRegistry[result.id] = handler
 
 
