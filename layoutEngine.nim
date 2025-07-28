@@ -9,12 +9,14 @@ type
   ConstraintKind* = enum
     ckLength, ckPercent, ckRatio, ckMinLength, ckMaxLength
 
+  PercentValue* = range[0 .. 100]
+
   Constraint* = object
     case kind*: ConstraintKind
     of ckLength:
       length*: Natural
     of ckPercent:
-      percent*: range[0 .. 100]
+      percent*: PercentValue
     of ckRatio:
       ratio*: Natural
     of ckMinLength:
@@ -30,6 +32,21 @@ type
   LayoutDirection* = enum
     ldHorizontal, ldVertical
 
+
+proc fixedLength*(value: Natural): Constraint = 
+  Constraint(kind: ckLength, length: value)
+
+proc percent*(value: PercentValue): Constraint = 
+  Constraint(kind: ckPercent, percent: value)
+
+proc ratio*(value: Natural): Constraint = 
+  Constraint(kind: ckRatio, ratio: value)
+
+proc minLength*(value: Natural): Constraint = 
+  Constraint(kind: ckMinLength, minLength: value)
+
+proc maxLength*(value: Natural): Constraint = 
+  Constraint(kind: ckMaxLength, maxLength: value)
 
 
 proc initRect*(x, y, width, height: Natural): Rect =
