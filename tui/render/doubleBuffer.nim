@@ -1,4 +1,3 @@
-import os
 import colors
 import terminal
 import strformat
@@ -9,24 +8,41 @@ import sets
 import layoutEngine
 
 
+export colors, terminal
+
+
 type
-  SpanColorsKind = enum
+  SpanColorsKind* = enum
     sckTrueColor, sckANSIColor
 
-  SpanColors = object
-    case kind: SpanColorsKind
+  SpanColors* = object
+    case kind*: SpanColorsKind
     of sckTrueColor:
-      fgTrueColor, bgTrueColor: Color
+      fgTrueColor*, bgTrueColor*: Color
     of sckANSIColor:
-      fg: ForegroundColor
-      bg: BackgroundColor
-      fgBright, bgBright: bool
+      fg*: ForegroundColor
+      bg*: BackgroundColor
+      fgBright*, bgBright*: bool
 
-  Span = object
-    rect: Rect
-    content: string
-    colors: SpanColors
-    styles: set[Style]
+  Span* = object
+    rect*: Rect
+    content*: string
+    colors*: SpanColors
+    styles*: set[Style]
+
+  SpanRow* = seq[Span]
+
+  Buffer* = object
+    lines*: seq[Rect]
+    front*, back*: seq[SpanRow]
+    changedLines*: Hashset[Natural]
+
+
+const
+  stylePrefix = "\e["
+  newLine = "\r\n"
+
+  defaultTerminalColors* = SpanColors(kind: sckANSIColor, fg: fgDefault, bg: bgDefault, fgBright: false, bgBright: false)
 
 
 template ansiBackgroundColorCode*(bg: BackgroundColor,
@@ -34,15 +50,23 @@ template ansiBackgroundColorCode*(bg: BackgroundColor,
   ansiStyleCode(bg.int + bright.int * 60)
 
 
-proc initSpanColors(fg: Color, bg: Color): SpanColors = 
+proc cursorPositionPrefix(x, y: Natural): string = 
+  fmt"{stylePrefix}{y+1};{x+1}f"
+
+
+proc addNewLineSuffix(s: var string) =
+  s &= newLine
+  
+
+proc initSpanColors*(fg: Color, bg: Color): SpanColors = 
   SpanColors(kind: sckTrueColor, fgTrueColor: fg, bgTrueColor: bg)
 
 
-proc initSpanColors(fg: ForegroundColor, bg: BackgroundColor, fgBright: bool = false, bgBright: bool = false): SpanColors = 
+proc initSpanColors*(fg: ForegroundColor, bg: BackgroundColor, fgBright: bool = false, bgBright: bool = false): SpanColors = 
   SpanColors(kind: sckANSIColor, fg: fg, bg: bg, fgBright: fgBright, bgBright: bgBright)
 
 
-proc `$`(colors: SpanColors): string = 
+proc `$`*(colors: SpanColors): string = 
   case colors.kind:
   of sckTrueColor:
     result.add(ansiForegroundColorCode(colors.fgTrueColor))
@@ -52,7 +76,7 @@ proc `$`(colors: SpanColors): string =
     result.add(ansiBackgroundColorCode(colors.bg, colors.bgBright))
         
 
-proc toSpan(rect: Rect, content: string, colors: SpanColors, styles: set[Style] = {}): Span = 
+proc toSpan*(rect: Rect, content: string, colors: SpanColors=defaultTerminalColors, styles: set[Style] = {}): Span = 
 
   doAssert rect.height == 1, fmt"Error: Spans are rects of height 1. Height of given rect: {rect.height}"
 
@@ -80,10 +104,10 @@ proc toSpan(rect: Rect, content: string, colors: SpanColors, styles: set[Style] 
   # ========================================================================
   doAssert content.len <= rect.width, fmt"Error: Content longer than span width. Span width: {rect.width}; Content length: {content.len}; Content: {content}"
 
-  Span(rect: rect, content: content,colors: colors, styles: styles)
+  Span(rect: rect, content: content, colors: colors, styles: styles)
 
 
-proc `$`(span: Span): string =
+proc `$`*(span: Span): string =
   for style in span.styles:
     result.add(ansiStyleCode(style))
 
@@ -93,19 +117,10 @@ proc `$`(span: Span): string =
   result.add(ansiResetCode)
 
 
-const stylePrefix = "\e["
-
-type
-  Buffer = object
-    lines: seq[Rect]
-    front, back: seq[seq[Span]]
-    changedLines: Hashset[Natural]
-
-
-proc initBuffer(rect: Rect): Buffer =
-  var constraints: seq[Constraint] = @[]
-  for _ in 0..<rect.height:
-    constraints.add(Constraint(kind: ckLength, length: 1))
+proc initBuffer*(rect: Rect): Buffer =
+  var constraints = repeat(Constraint(kind: ckLength, length: 1), rect.height)
+  # for _ in 0..<rect.height:
+  # constraints.add()
     
   result.lines = layout(ldVertical, rect, constraints)
   result.front = newSeq[seq[Span]](rect.height)
@@ -113,19 +128,19 @@ proc initBuffer(rect: Rect): Buffer =
   result.changedLines = HashSet[Natural]()
 
 
-proc `[]`(buffer: Buffer, lineNumber: int): Rect = 
+proc getLineRect*(buffer: Buffer, lineNumber: Natural): Rect = 
   buffer.lines[lineNumber]
 
 
-proc width(buffer: Buffer): Natural =
-  buffer[0].width
+proc width*(buffer: Buffer): Natural =
+  buffer.getLineRect(0).width
 
 
-proc height(buffer: Buffer): Natural =
-  buffer[0].height
+proc height*(buffer: Buffer): Natural =
+  buffer.lines.len
 
 
-proc onLine(buffer: var Buffer, lineNumber: int, spans: varargs[Span]) =
+proc setLineContent*(buffer: var Buffer, lineNumber: Natural, spans: varargs[Span]) =
   let widthSum = spans.map(proc(span: Span): Natural = span.rect.width).sum
 
   doAssert widthSum <= buffer.width, "Error: Spans exceed line length"
@@ -133,15 +148,7 @@ proc onLine(buffer: var Buffer, lineNumber: int, spans: varargs[Span]) =
   buffer.changedLines.incl(lineNumber)
 
 
-proc cursorPositionPrefix(x, y: Natural): string = 
-  fmt"{stylePrefix}{y+1};{x+1}f"
-
-
-proc addNewLineSuffix(s: var string) =
-  s &= "\r\n"
-  
-
-proc dumpBuffer(buffer: Buffer, dumpBackBuffer: bool): string =
+proc dumpBuffer*(buffer: Buffer, dumpBackBuffer: bool): string =
   let toDump = if dumpBackBuffer: buffer.back else: buffer.front
 
   for line in toDump:
@@ -155,12 +162,15 @@ proc dumpBuffer(buffer: Buffer, dumpBackBuffer: bool): string =
     result.addNewLineSuffix()
 
 
-proc renderFrame(buffer: var Buffer): string =
+proc renderFrame*(buffer: var Buffer): string =
+  if buffer.changedLines.len == 0:
+    return ""
+
   while buffer.changedLines.len > 0:
 
     let
       lineNumber = buffer.changedLines.pop
-      line = buffer[lineNumber]
+      line = buffer.getLineRect(lineNumber)
 
     result.add(cursorPositionPrefix(line.x, line.y))
 
@@ -169,58 +179,71 @@ proc renderFrame(buffer: var Buffer): string =
     
     result.addNewLineSuffix()
 
-
+  # Note: Swapping without clearing for now
   (buffer.front, buffer.back) = (buffer.back, buffer.front)
 
+
+proc splitLine*(line: Rect, constraints: openArray[Constraint]): seq[Rect] =
+  doAssert line.height == 1, "Error: Lines must have height of 1."
+  layout(ldHorizontal, line, constraints)
+
+
+proc splitLine*(buffer: Buffer, lineNumber: Natural, constraints: openArray[Constraint]): seq[Rect] =
+  buffer.getLineRect(lineNumber).splitLine(constraints)
+
+
+proc writeToLine*(buffer: var Buffer, lineNumber: Natural, content:string, colors: SpanColors = defaultTerminalColors, styles: set[Style] = {}) =
+  let lineContent= [toSpan(buffer.getLineRect(lineNumber), content, colors, styles)]
+  buffer.setLineContent(lineNumber, lineContent)
       
+
+proc clearLine*(buffer: var Buffer, lineNumber: Natural) =
+  buffer.back[lineNumber].setLen(0)
+
+
+proc clearBackBuffer*(buffer: var Buffer) =
+  for i in 0 ..< buffer.height:
+    buffer.clearLine(i)
+
+  buffer.changedLines.clear()
+
+
+proc flushToStdout*(buffer: var Buffer) =
+  stdout.write(buffer.renderFrame(), newLine)
+  stdout.flushFile()
+
+
 when isMainModule:
   let rect = initRect(10, 10, 30, 10)
   
   var buffer = initBuffer(rect)
 
-  let
-    line0 = buffer[0]
-    counterLine = buffer[1]
-    line2 = buffer[2]
+  buffer.writeToLine(0, "True Color", initSpanColors(colPurple, colBurlyWood), {styleBlink, styleUnderscore})
 
-    span0Content = "True Color"
-    span1Content = "ANSI Color"
+  buffer.writeToLine(2, "ANSI Color", initSpanColors(fgYellow, bgBlack))
+
+
+  let
     counterLabel = "Counted: "
     counterSuffix = "time(s)"
 
-    line0Rects = layout(ldHorizontal, line0, @[
-      Constraint(kind: ckMinLength, minLength: span0Content.len),
+    counterLineRects = buffer.splitLine(1, @[
+      fixedLength(counterLabel.len),
+      minLength(0),
+      fixedLength(counterSuffix.len)
     ])
 
-    line2Rects = layout(ldHorizontal, line2, @[
-      Constraint(kind: ckMinLength, minLength: span1Content.len),
-    ])
 
+    counterLabelSpan = toSpan(counterLineRects[0], counterLabel)
+    counterSuffixSpan = toSpan(counterLineRects[2], counterSuffix)
 
-    counterLineRects = layout(ldHorizontal, counterLine, @[
-      Constraint(kind: ckLength, length: counterLabel.len),
-      Constraint(kind: ckMinLength, minLength: 0),
-      Constraint(kind: ckLength, length: counterSuffix.len),
-    ])
-
-    span0Rect = line0Rects[0]
-    span1Rect = line2Rects[0]
-
-  let spanTrueColor = toSpan(span0Rect, span0Content, initSpanColors(colPurple, colBurlyWood), {styleBlink, styleUnderscore})
-
-  let spanANSIColor = toSpan(span1Rect, span1Content, initSpanColors(fgYellow, bgBlack))
-
-  let counterLabelSpan = toSpan(counterLineRects[0], counterLabel, initSpanColors(fgDefault, bgDefault))
-
-  let counterSuffixSpan = toSpan(counterLineRects[2], counterSuffix, initSpanColors(fgDefault, bgDefault))
-
-  buffer.onLine(0, spanTrueColor)
-  buffer.onLine(2, spanANSIColor)
 
   for i in 0 ..< 100000:
-    let counterText = fmt" {$i} "
-    let counterSpan = toSpan(counterLineRects[1], counterText, initSpanColors(fgDefault, bgDefault))
-    buffer.onLine(1, counterLabelSpan, counterSpan, counterSuffixSpan)
+    let
+      counterText = fmt" {$i} "
+      counterSpan = toSpan(counterLineRects[1], counterText)
+
+    buffer.setLineContent(1, counterLabelSpan, counterSpan, counterSuffixSpan)
     
-    echo buffer.renderFrame()
-    # sleep(10)
+    buffer.flushToStdout()
+
