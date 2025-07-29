@@ -4,6 +4,7 @@ import strformat
 import sequtils
 import math
 import sets
+import unicode
 
 import layoutEngine
 
@@ -32,7 +33,7 @@ type
 
   SpanRow* = seq[Span]
 
-  Buffer* = object
+  Buffer* = ref object
     lines*: seq[Rect]
     front*, back*: seq[SpanRow]
     changedLines*: Hashset[Natural]
@@ -104,7 +105,7 @@ proc toSpan*(rect: Rect, content: string, colors: SpanColors=defaultTerminalColo
   # but deferred for now to focus on core buffer and rendering infrastructure.
   #
   # ========================================================================
-  doAssert content.len <= rect.width, fmt"Error: Content longer than span width. Span width: {rect.width}; Content length: {content.len}; Content: {content}"
+  doAssert content.runeLen <= rect.width, fmt"Error: Content longer than span width. Span width: {rect.width}; Content length: {content.len}; Content: {content}"
 
   Span(rect: rect, content: content, colors: colors, styles: styles)
 
@@ -119,7 +120,8 @@ proc `$`*(span: Span): string =
   result.add(ansiResetCode)
 
 
-proc initBuffer*(rect: Rect): Buffer =
+proc newBuffer*(rect: Rect): Buffer =
+  result = new(Buffer)
   var constraints = repeat(Constraint(kind: ckLength, length: 1), rect.height)
     
   result.lines = layout(ldVertical, rect, constraints)
@@ -140,7 +142,7 @@ proc height*(buffer: Buffer): Natural =
   buffer.lines.len
 
 
-proc setLineContent*(buffer: var Buffer, lineNumber: Natural, spans: varargs[Span]) =
+proc setLineContent*(buffer: Buffer, lineNumber: Natural, spans: varargs[Span]) =
   let widthSum = spans.map(proc(span: Span): Natural = span.rect.width).sum
 
   doAssert widthSum <= buffer.width, "Error: Spans exceed line length"
@@ -162,7 +164,7 @@ proc dumpBuffer*(buffer: Buffer, dumpBackBuffer: bool): string =
     result.addNewLineSuffix()
 
 
-proc buildFrame*(buffer: var Buffer): Frame =
+proc buildFrame*(buffer: Buffer): Frame =
   if buffer.changedLines.len == 0:
     return ""
 
@@ -192,16 +194,16 @@ proc splitLine*(buffer: Buffer, lineNumber: Natural, constraints: openArray[Cons
   buffer.getLineRect(lineNumber).splitLine(constraints)
 
 
-proc writeToLine*(buffer: var Buffer, lineNumber: Natural, content:string, colors: SpanColors = defaultTerminalColors, styles: set[Style] = {}) =
+proc writeToLine*(buffer: Buffer, lineNumber: Natural, content:string, colors: SpanColors = defaultTerminalColors, styles: set[Style] = {}) =
   let lineContent= [toSpan(buffer.getLineRect(lineNumber), content, colors, styles)]
   buffer.setLineContent(lineNumber, lineContent)
       
 
-proc clearLine*(buffer: var Buffer, lineNumber: Natural) =
+proc clearLine*(buffer: Buffer, lineNumber: Natural) =
   buffer.back[lineNumber].setLen(0)
 
 
-proc clearBackBuffer*(buffer: var Buffer) =
+proc clearBackBuffer*(buffer: Buffer) =
   for i in 0 ..< buffer.height:
     buffer.clearLine(i)
 
@@ -213,14 +215,14 @@ proc drawFrame*(frame: Frame) =
   stdout.flushFile()
 
 
-proc render*(buffer: var Buffer) =
+proc render*(buffer: Buffer) =
   drawFrame(buffer.buildFrame())
 
 
 when isMainModule:
   let rect = initRect(10, 10, 30, 10)
   
-  var buffer = initBuffer(rect)
+  var buffer = newBuffer(rect)
 
   buffer.writeToLine(0, "True Color", initSpanColors(colPurple, colBurlyWood), {styleBlink, styleUnderscore})
 
