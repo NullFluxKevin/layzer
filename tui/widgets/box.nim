@@ -10,16 +10,24 @@ import unicode
 type
   Symbol = Rune
 
-  DrawableObject = object
+  LineHorizontal = object
     symbol: Symbol
     # these three seem to repeat in widgets, might be grouped into another object for reuse
     buffer: Buffer
     colors: SpanColors
     styles: set[Style]
 
-  LineHorizontal = DrawableObject
-  LineVertical = DrawableObject
-  Cell = DrawableObject
+  LineVertical = object
+    symbol: Symbol
+    buffer: Buffer
+    colors: SpanColors
+    styles: set[Style]
+
+  Cell = object
+    symbol: Symbol
+    buffer: Buffer
+    colors: SpanColors
+    styles: set[Style]
 
   BoxDrawingSymbolKind = enum
     bdskHorizontal,
