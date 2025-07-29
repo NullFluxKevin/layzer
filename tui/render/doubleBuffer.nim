@@ -37,6 +37,8 @@ type
     front*, back*: seq[SpanRow]
     changedLines*: Hashset[Natural]
 
+  Frame* = string
+
 
 const
   stylePrefix = "\e["
@@ -119,8 +121,6 @@ proc `$`*(span: Span): string =
 
 proc initBuffer*(rect: Rect): Buffer =
   var constraints = repeat(Constraint(kind: ckLength, length: 1), rect.height)
-  # for _ in 0..<rect.height:
-  # constraints.add()
     
   result.lines = layout(ldVertical, rect, constraints)
   result.front = newSeq[seq[Span]](rect.height)
@@ -162,7 +162,7 @@ proc dumpBuffer*(buffer: Buffer, dumpBackBuffer: bool): string =
     result.addNewLineSuffix()
 
 
-proc renderFrame*(buffer: var Buffer): string =
+proc buildFrame*(buffer: var Buffer): Frame =
   if buffer.changedLines.len == 0:
     return ""
 
@@ -208,9 +208,13 @@ proc clearBackBuffer*(buffer: var Buffer) =
   buffer.changedLines.clear()
 
 
-proc flushToStdout*(buffer: var Buffer) =
-  stdout.write(buffer.renderFrame(), newLine)
+proc drawFrame*(frame: Frame) =
+  stdout.write(frame, newLine)
   stdout.flushFile()
+
+
+proc render*(buffer: var Buffer) =
+  drawFrame(buffer.buildFrame())
 
 
 when isMainModule:
@@ -245,5 +249,5 @@ when isMainModule:
 
     buffer.setLineContent(1, counterLabelSpan, counterSpan, counterSuffixSpan)
     
-    buffer.flushToStdout()
+    buffer.render()
 
