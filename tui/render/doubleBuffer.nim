@@ -181,9 +181,7 @@ proc buildFrame*(buffer: Buffer): Frame =
 
     for span in buffer.back[lineNumber]:
       result.add($span)
-    
-    result.addNewLineSuffix()
-
+  
   # Note: Swapping without clearing for now
   (buffer.front, buffer.back) = (buffer.back, buffer.front)
 
@@ -214,7 +212,7 @@ proc clearBackBuffer*(buffer: Buffer) =
 
 
 proc drawFrame*(frame: Frame) =
-  stdout.write(frame, newLine)
+  stdout.write(frame)
   stdout.flushFile()
 
 
