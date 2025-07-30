@@ -1,8 +1,8 @@
-import os
+import unicode
 
+import tui/core
 import tui/render/doubleBuffer
 import layoutEngine
-import unicode
 
 
 # Naming convention: the thing + its direction/Position e.g. BorderHorizontal, CornerLeftTop
@@ -44,9 +44,15 @@ type
     borderLeft, borderRight: LineVertical
     cornerTopLeft, cornerTopRight, cornerBottomLeft, cornerBottomRight: Cell
     canvas: Rect
+    symbols: BoxDrawingSymbols
     colors: SpanColors
     styles: set[Style]
-  
+
+  BoxRegions = object
+    borderTop, borderBottom, borderLeft, borderRight: Rect
+    cornerTopLeft, cornerTopRight, cornerBottomLeft, cornerBottomRight: Rect
+    canvas: Rect
+    
 
 proc toSymbol(s: string): Symbol = 
   doAssert s.runeLen == 1, "Error: Symbol must be a single character"
@@ -59,8 +65,15 @@ proc initLineHorizontal(rect: Rect, symbol: Symbol, colors: SpanColors = default
   LineHorizontal(buffer: buffer, symbol: symbol, colors: colors, styles: styles)
 
 
-proc buildFrame(line: LineHorizontal): Frame = 
+proc resized(line: LineHorizontal, rect: Rect): LineHorizontal =
+  initLineHorizontal(rect, line.symbol, line.colors, line.styles)
+
+
+proc updateContent(line: LineHorizontal) = 
   line.buffer.writeToLine(0, repeat(line.symbol, line.buffer.width), line.colors, line.styles)
+
+
+proc buildFrame(line: LineHorizontal): Frame = 
   line.buffer.buildFrame()
 
 
@@ -74,8 +87,15 @@ proc initCell(rect: Rect, symbol: Symbol, colors: SpanColors = defaultTerminalCo
   Cell(buffer: buffer, symbol: symbol, colors: colors, styles: styles)
 
 
-proc buildFrame(cell: Cell): Frame =
+proc updateContent(cell: Cell) = 
   cell.buffer.writeToLine(0, $cell.symbol)
+
+
+proc resized(cell: Cell, rect: Rect): Cell =
+  initCell(rect, cell.symbol, cell.colors, cell.styles)
+
+
+proc buildFrame(cell: Cell): Frame =
   cell.buffer.buildFrame()
 
 
@@ -89,10 +109,16 @@ proc initLineVertical(rect: Rect, symbol: Symbol, colors: SpanColors = defaultTe
   LineVertical(buffer: buffer, symbol: symbol, colors: colors, styles: styles)
 
 
-proc buildFrame(line: LineVertical): Frame = 
+proc updateContent(line: LineVertical) = 
   for i in 0 ..< line.buffer.height:
     line.buffer.writeToLine(i, $line.symbol, line.colors, line.styles)
 
+
+proc resized(line: LineVertical, rect: Rect): LineVertical =
+  initLineVertical(rect, line.symbol, line.colors, line.styles)
+
+
+proc buildFrame(line: LineVertical): Frame = 
   line.buffer.buildFrame()
 
 
@@ -100,9 +126,8 @@ proc render(line: LineVertical) =
   drawFrame(line.buildFrame())
 
 
-proc initBox(rect: Rect, symbols: BoxDrawingSymbols, colors: SpanColors = defaultTerminalColors, styles: set[Style] = {}): Box = 
+proc toBoxRegions(rect: Rect): BoxRegions = 
   doAssert rect.width >= 3 and rect.height >= 3, "Error: Rect used to build the box must at least be 3x3"
-
   let
     verticalConstraints = @[
       Constraint(kind: ckLength, length: 1),
@@ -121,22 +146,30 @@ proc initBox(rect: Rect, symbols: BoxDrawingSymbols, colors: SpanColors = defaul
     midRowCols = layout(ldHorizontal, midRow, horizontalConstraints)
     bottomRowCols = layout(ldHorizontal, bottomRow, horizontalConstraints)
 
-    (cornerTopLeft, borderTop, cornerTopRight) = (topRowCols[0], topRowCols[1], topRowCols[2])
-    (borderLeft, canvas, borderRight) = (midRowCols[0], midRowCols[1], midRowCols[2])
-    (cornerBottomLeft, borderBottom, cornerBottomRight) = (bottomRowCols[0], bottomRowCols[1], bottomRowCols[2])
+  (result.cornerTopLeft, result.borderTop, result.cornerTopRight) = (topRowCols[0], topRowCols[1], topRowCols[2])
+  (result.borderLeft, result.canvas, result.borderRight) = (midRowCols[0], midRowCols[1], midRowCols[2])
+  (result.cornerBottomLeft, result.borderBottom, result.cornerBottomRight) = (bottomRowCols[0], bottomRowCols[1], bottomRowCols[2])
 
 
-  result.borderTop = initLineHorizontal(borderTop, symbols[bdskHorizontal], colors, styles)
-  result.borderBottom = initLineHorizontal(borderBottom, symbols[bdskHorizontal], colors, styles)
-  result.borderLeft = initLineVertical(borderLeft, symbols[bdskVertical], colors, styles)
-  result.borderRight = initLineVertical(borderRight, symbols[bdskVertical], colors, styles)
+proc initBox(rect: Rect, symbols: BoxDrawingSymbols, colors: SpanColors = defaultTerminalColors, styles: set[Style] = {}): Box = 
 
-  result.cornerTopLeft = initCell(cornerTopLeft, symbols[bdskTopLeft], colors, styles)
-  result.cornerTopRight = initCell(cornerTopRight, symbols[bdskTopRight], colors, styles)
-  result.cornerBottomLeft = initCell(cornerBottomLeft, symbols[bdskBottomLeft], colors, styles)
-  result.cornerBottomRight = initCell(cornerBottomRight, symbols[bdskBottomRight], colors, styles)
+  result.symbols = symbols
+  result.colors = colors
+  result.styles = styles
 
-  result.canvas = canvas
+  let regions = rect.toBoxRegions
+
+  result.borderTop = initLineHorizontal(regions.borderTop, symbols[bdskHorizontal], colors, styles)
+  result.borderBottom = initLineHorizontal(regions.borderBottom, symbols[bdskHorizontal], colors, styles)
+  result.borderLeft = initLineVertical(regions.borderLeft, symbols[bdskVertical], colors, styles)
+  result.borderRight = initLineVertical(regions.borderRight, symbols[bdskVertical], colors, styles)
+
+  result.cornerTopLeft = initCell(regions.cornerTopLeft, symbols[bdskTopLeft], colors, styles)
+  result.cornerTopRight = initCell(regions.cornerTopRight, symbols[bdskTopRight], colors, styles)
+  result.cornerBottomLeft = initCell(regions.cornerBottomLeft, symbols[bdskBottomLeft], colors, styles)
+  result.cornerBottomRight = initCell(regions.cornerBottomRight, symbols[bdskBottomRight], colors, styles)
+
+  result.canvas = regions.canvas
 
 
 proc setSymbols(box: var Box, symbols: BoxDrawingSymbols) =
@@ -149,6 +182,22 @@ proc setSymbols(box: var Box, symbols: BoxDrawingSymbols) =
   box.cornerTopRight.symbol = symbols[bdskTopRight]
   box.cornerBottomLeft.symbol = symbols[bdskBottomLeft]
   box.cornerBottomRight.symbol = symbols[bdskBottomRight]
+
+
+proc updateContent(box: Box) = 
+  box.borderTop.updateContent()
+  box.borderBottom.updateContent()
+  box.borderLeft.updateContent()
+  box.borderRight.updateContent()
+
+  box.cornerTopLeft.updateContent()
+  box.cornerTopRight.updateContent()
+  box.cornerBottomLeft.updateContent()
+  box.cornerBottomRight.updateContent()
+
+
+proc resized(box: Box, rect: Rect): Box = 
+  initBox(rect, box.symbols, box.colors, box.styles)
 
 
 proc buildFrame(box: Box): Frame = 
@@ -169,8 +218,6 @@ proc render(box: Box) =
 
 when isMainModule:
   let
-    rect = initRect(10, 10, 10, 10)
-
     singleBorderSymbols = [
       "─".toSymbol,
       "│".toSymbol,
@@ -198,17 +245,75 @@ when isMainModule:
       "╯".toSymbol
     ]
 
+ 
+  let
+    (maxWidth, maxHeight) = terminalSize()
+    minWidth = 3
+    minHeight = 3
 
-  var box = initBox(rect, singleBorderSymbols)
 
+  var
+    isRunning = true
+    (width, height) = (maxWidth, maxHeight)
 
-  for i in 0 ..< 100:
+    rect = initRect(0, 0, width, height)
+    box = initBox(rect,roundedBorderSymbols)
 
-    if i mod 2 == 0:
-      box.setSymbols(singleBorderSymbols)
-    else:
-      box.setSymbols(doubleBorderSymbols)
-
+  proc resizeRedraw(rect: Rect) =
+    erasescreen()
+    box = box.resized(rect)
+    box.updateContent()
     box.render()
-    sleep(10)
+    
 
+  proc onKeyPress(ctx: EventContext) =
+    if not (ctx of KeyContext):
+      return
+
+    let c = KeyContext(ctx)
+    let key = c.key
+    
+    if key == Key.Q or key == Key.CtrlC:
+      println("Exiting...")
+      isRunning = false
+
+      eraseScreen()
+      setCursorPos(0, 0)
+      showCursor()
+
+    elif key == Key.K:
+      width = clamp(width + 1, minWidth, maxWidth)
+      height = clamp(height + 1, minHeight, maxHeight)
+      rect = initRect(rect.x, rect.y, width, height)
+      resizeRedraw(rect)
+      
+    elif key == Key.J:
+      width = clamp(width - 1, minWidth, maxWidth)
+      height = clamp(height - 1, minHeight, maxHeight)
+      rect = initRect(rect.x, rect.y, width, height)
+      resizeRedraw(rect)
+
+
+  proc onResize(ctx: EventContext) =
+    if not (ctx of ResizeContext):
+      return
+
+    let c = ResizeContext(ctx)
+    (width, height) = (c.width, c.height)
+    rect = initRect(rect.x, rect.y, width, height)
+    resizeRedraw(rect)
+
+
+  println("Press J and K to change box size; resize terminal to redraw fullscreen box.")
+  println("Press Q or Ctrl-C to quit. Press anything to start the demo.")
+  discard getch()
+
+  eraseScreen()
+  hideCursor()
+  box.updateContent()
+  box.render()
+
+  let tuiConfig = initTuiConfig()
+  runTuiApp(tuiConfig, isRunning, onResize, onKeyPress):
+    discard
+ 
