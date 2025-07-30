@@ -100,7 +100,7 @@ proc render(line: LineVertical) =
   drawFrame(line.buildFrame())
 
 
-proc newBuffer(rect: Rect, symbols: BoxDrawingSymbols, colors: SpanColors = defaultTerminalColors, styles: set[Style] = {}): Box = 
+proc initBox(rect: Rect, symbols: BoxDrawingSymbols, colors: SpanColors = defaultTerminalColors, styles: set[Style] = {}): Box = 
   doAssert rect.width >= 3 and rect.height >= 3, "Error: Rect used to build the box must at least be 3x3"
 
   let
@@ -199,7 +199,7 @@ when isMainModule:
     ]
 
 
-  var box = newBuffer(rect, singleBorderSymbols)
+  var box = initBox(rect, singleBorderSymbols)
 
 
   for i in 0 ..< 100:
