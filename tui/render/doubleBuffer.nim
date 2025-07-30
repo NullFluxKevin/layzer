@@ -5,11 +5,35 @@ import sequtils
 import math
 import sets
 import unicode
+import posix
+import strutils
 
 import layoutEngine
 
 
 export colors, terminal
+
+
+proc initModule() =
+  discard setlocale(LC_ALL, "")
+
+initModule()
+
+type WChar = int32
+proc wcwidth(c: WChar): cint {.importc, cdecl, header:"<wchar.h>".}
+
+
+proc displayWidth(content: string): int = 
+  doAssert '\t' notin content and
+    '\r' notin content and
+    '\n' notin content,
+    "Error: non-printable characters are not allowed. Use whitespaces or layout engine instead."
+
+  for rune in content.toRunes:
+    let charWidth = wcwidth(rune.WChar)
+    doAssert charWidth >= 0, fmt"Error: Span content contains a character with unknown display width: (U+{rune.int.toHex(6)})"
+
+    result += charWidth
 
 
 type
@@ -83,29 +107,8 @@ proc toSpan*(rect: Rect, content: string, colors: SpanColors=defaultTerminalColo
 
   doAssert rect.height == 1, fmt"Error: Spans are rects of height 1. Height of given rect: {rect.height}"
 
-  # ========================================================================
-  # TODO: Proper Unicode Character Width Handling
-  #
-  # Currently, the code uses `content.len` (byte length) for span width checks,
-  # which does NOT correctly handle multi-byte or wide Unicode characters.
-  #
-  # Attempted to use C's `wcwidth()` via Nim FFI to determine the display width
-  # of characters, but it consistently returns -1 for wide characters like '你',
-  # despite correct locale settings and environment.
-  #
-  # This unreliable behavior on the target platform makes libc's `wcwidth` unusable.
-  #
-  # Future plans:
-  # - Investigate or port a pure Nim implementation of `wcwidth` or similar,
-  #   based on Unicode East Asian Width properties, to avoid dependency on libc.
-  # - Alternatively, temporarily restrict input to ASCII and single-width chars,
-  #   with a clear comment about this limitation.
-  #
-  # This feature is critical for proper rendering and cursor positioning in the TUI,
-  # but deferred for now to focus on core buffer and rendering infrastructure.
-  #
-  # ========================================================================
-  doAssert content.runeLen <= rect.width, fmt"Error: Content longer than span width. Span width: {rect.width}; Content length: {content.len}; Content: {content}"
+  let contentWidth = displayWidth(content)
+  doAssert contentWidth <= rect.width, fmt"Error: Content longer than span width. Span width: {rect.width}; Content length: {content.len}; Content: {content}"
 
   Span(rect: rect, content: content, colors: colors, styles: styles)
 
