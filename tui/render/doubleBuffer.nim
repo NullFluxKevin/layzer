@@ -226,7 +226,7 @@ proc splitLine*(buffer: Buffer, lineNumber: Natural, constraints: openArray[Cons
   buffer.getLineRect(lineNumber).splitLine(constraints)
 
 
-proc writeToLine*(buffer: Buffer, lineNumber: Natural, content: string, styles: SpanStyles) =
+proc writeToLine*(buffer: Buffer, lineNumber: Natural, content: string, styles: SpanStyles = defaultSpanStyles) =
   let lineContent= [toSpan(buffer.getLineRect(lineNumber), content, styles)]
   buffer.setLineContent(lineNumber, lineContent)
       
