@@ -45,11 +45,16 @@ type
       bg*: BackgroundColor
       fgBright*, bgBright*: bool
 
+  TextStyles* = set[Style]
+
+  SpanStyles* = object
+    colors*: SpanColors
+    textStyles*: TextStyles
+
   Span* = object
     rect*: Rect
     content*: string
-    colors*: SpanColors
-    styles*: set[Style]
+    styles*: SpanStyles
 
   SpanRow* = seq[Span]
 
@@ -66,6 +71,8 @@ const
   newLine = "\r\n"
 
   defaultTerminalColors* = SpanColors(kind: sckANSIColor, fg: fgDefault, bg: bgDefault, fgBright: false, bgBright: false)
+
+  defaultSpanStyles* = SpanStyles(colors: defaultTerminalColors, textStyles: {})
 
 
 template ansiBackgroundColorCode*(bg: BackgroundColor,
@@ -99,8 +106,29 @@ proc `$`*(colors: SpanColors): string =
     result.add(ansiBackgroundColorCode(colors.bg, colors.bgBright))
         
 
-proc toSpan*(rect: Rect, content: string, colors: SpanColors=defaultTerminalColors, styles: set[Style] = {}): Span = 
+proc initSpanStyles*(colors: SpanColors, styles: TextStyles = {}): SpanStyles = 
+  result.colors = colors
+  result.textStyles = styles
 
+
+proc initSpanStyles*(fgColor: Color, bgColor: Color, styles: TextStyles = {}): SpanStyles = 
+  result.colors = initSpanColors(fgColor, bgColor)
+  result.textStyles = styles
+
+
+proc initSpanStyles*(fgColor: ForegroundColor, bgColor: BackgroundColor, styles: TextStyles = {}): SpanStyles = 
+  result.colors = initSpanColors(fgColor, bgColor)
+  result.textStyles = styles
+
+
+proc `$`*(styles: SpanStyles): string = 
+  for style in styles.textStyles:
+    result.add(ansiStyleCode(style))
+
+  result.add($styles.colors)
+
+
+proc toSpan*(rect: Rect, content: string, styles: SpanStyles = defaultSpanStyles): Span = 
   doAssert rect.height == 1, fmt"Error: Spans are rects of height 1. Height of given rect: {rect.height}"
 
   doAssert '\t' notin content and
@@ -109,16 +137,13 @@ proc toSpan*(rect: Rect, content: string, colors: SpanColors=defaultTerminalColo
     "Error: non-printable characters are not allowed. Use whitespaces or layout engine instead."
 
   let contentWidth = displayWidth(content)
-  doAssert contentWidth <= rect.width, fmt"Error: Content longer than span width. Span width: {rect.width}; Content length: {content.len}; Content: {content}"
+  doAssert contentWidth <= rect.width, fmt"Error: Content longer than span width. Span width: {rect.width}; Content display width: {contentWidth}; Content: {content}"
 
-  Span(rect: rect, content: content, colors: colors, styles: styles)
+  Span(rect: rect, content: content, styles: styles)
 
 
 proc `$`*(span: Span): string =
-  for style in span.styles:
-    result.add(ansiStyleCode(style))
-
-  result.add($span.colors)
+  result.add($span.styles)
 
   result.add(span.content)
   result.add(ansiResetCode)
@@ -126,7 +151,7 @@ proc `$`*(span: Span): string =
 
 proc newBuffer*(rect: Rect): Buffer =
   result = new(Buffer)
-  var constraints = repeat(Constraint(kind: ckLength, length: 1), rect.height)
+  var constraints = repeat(fixedLength(1), rect.height)
     
   result.lines = layout(ldVertical, rect, constraints)
   result.front = newSeq[seq[Span]](rect.height)
@@ -144,6 +169,11 @@ proc width*(buffer: Buffer): Natural =
 
 proc height*(buffer: Buffer): Natural =
   buffer.lines.len
+
+
+proc position*(buffer: Buffer): tuple[x: Natural, y: Natural] =
+  let rectTopLeft =  buffer.getLineRect(0)
+  (rectTopLeft.x, rectTopLeft.y)
 
 
 proc setLineContent*(buffer: Buffer, lineNumber: Natural, spans: varargs[Span]) =
@@ -196,8 +226,8 @@ proc splitLine*(buffer: Buffer, lineNumber: Natural, constraints: openArray[Cons
   buffer.getLineRect(lineNumber).splitLine(constraints)
 
 
-proc writeToLine*(buffer: Buffer, lineNumber: Natural, content:string, colors: SpanColors = defaultTerminalColors, styles: set[Style] = {}) =
-  let lineContent= [toSpan(buffer.getLineRect(lineNumber), content, colors, styles)]
+proc writeToLine*(buffer: Buffer, lineNumber: Natural, content: string, styles: SpanStyles) =
+  let lineContent= [toSpan(buffer.getLineRect(lineNumber), content, styles)]
   buffer.setLineContent(lineNumber, lineContent)
       
 
@@ -226,9 +256,9 @@ when isMainModule:
   
   var buffer = newBuffer(rect)
 
-  buffer.writeToLine(0, "True Color", initSpanColors(colPurple, colBurlyWood), {styleBlink, styleUnderscore})
+  buffer.writeToLine(0, "True Color", initSpanStyles(colPurple, colBurlyWood, {styleBlink, styleUnderscore} ) )
 
-  buffer.writeToLine(2, "ANSI Color", initSpanColors(fgYellow, bgBlack))
+  buffer.writeToLine(2, "ANSI Color", initSpanStyles(fgYellow, bgBlack))
 
 
   let
