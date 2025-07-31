@@ -23,15 +23,11 @@ type WChar = int32
 proc wcwidth(c: WChar): cint {.importc, cdecl, header:"<wchar.h>".}
 
 
-proc displayWidth(content: string): int = 
-  doAssert '\t' notin content and
-    '\r' notin content and
-    '\n' notin content,
-    "Error: non-printable characters are not allowed. Use whitespaces or layout engine instead."
-
+proc displayWidth*(content: string): int = 
   for rune in content.toRunes:
     let charWidth = wcwidth(rune.WChar)
-    doAssert charWidth >= 0, fmt"Error: Span content contains a character with unknown display width: (U+{rune.int.toHex(6)})"
+
+    doAssert charWidth >= 0, fmt"Error: Content contains a character with unknown display width: (U+{rune.int.toHex(6)})"
 
     result += charWidth
 
@@ -106,6 +102,11 @@ proc `$`*(colors: SpanColors): string =
 proc toSpan*(rect: Rect, content: string, colors: SpanColors=defaultTerminalColors, styles: set[Style] = {}): Span = 
 
   doAssert rect.height == 1, fmt"Error: Spans are rects of height 1. Height of given rect: {rect.height}"
+
+  doAssert '\t' notin content and
+    '\r' notin content and
+    '\n' notin content,
+    "Error: non-printable characters are not allowed. Use whitespaces or layout engine instead."
 
   let contentWidth = displayWidth(content)
   doAssert contentWidth <= rect.width, fmt"Error: Content longer than span width. Span width: {rect.width}; Content length: {content.len}; Content: {content}"
