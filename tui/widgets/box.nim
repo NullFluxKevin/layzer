@@ -60,6 +60,17 @@ type
   # WARNING: BorderDrawingSymbols cantains only borders regions, accessing brCanvas will cause KeyError
   BorderDrawingSymbols* = Table[BoxRegions, Symbol]
 
+  # Must use workaround to tell the compiler a proc is of type BorderRenderer:
+  # 
+  #   proc render(buffer: Buffer) = discard
+  #   let br: BorderRenderer = render
+  #   ...
+  #   let renderers = {brBorderTop: br, ...}.toTable
+  #   drawBorders(rect, renderers)
+  # 
+  BorderRenderer* = proc(buffer: Buffer)
+  BorderRenderers* = Table[BoxRegions, BorderRenderer]
+
 
 let
     singleBorderSymbols*: BorderDrawingSymbols = {
@@ -95,7 +106,6 @@ let
       brCornerBottomRight: "╯".toSymbol
     }.toTable    
     
-
 
 proc drawLineHorizontal*(buffer: Buffer, symbol: Symbol, styles: SpanStyles = defaultSpanStyles) =
   buffer.writeHorizontal(repeat(symbol, buffer.width), styles)
@@ -138,17 +148,18 @@ proc toBoxRects*(rect: Rect): BoxRects =
   result[brCornerBottomRight] = bottomRowCols[2]
 
 
-proc drawBorders*(boxRects: BoxRects, symbols: BorderDrawingSymbols = roundedBorderSymbols) = 
-  for region in low(BoxRegions) .. high(BoxRegions):
+# Possible perf bottleneck for creating 8 buffers and render immediately
+proc drawBorders*(boxRects: BoxRects, symbols: BorderDrawingSymbols = roundedBorderSymbols, styles: SpanStyles = defaultSpanStyles) = 
+  for region in BoxRegions:
     case region:
     of brBorderTop, brBorderBottom:
       let buffer = newBuffer(boxRects[region])
-      buffer.drawLineHorizontal(symbols[region])
+      buffer.drawLineHorizontal(symbols[region], styles)
       buffer.render()
 
     of brBorderLeft, brBorderRight:
       let buffer = newBuffer(boxRects[region])
-      buffer.drawLineVertical(symbols[region])
+      buffer.drawLineVertical(symbols[region], styles)
       buffer.render()
 
     of brCornerTopLeft,
@@ -156,16 +167,31 @@ proc drawBorders*(boxRects: BoxRects, symbols: BorderDrawingSymbols = roundedBor
       brCornerBottomLeft,
       brCornerBottomRight:
       let buffer = newBuffer(boxRects[region])
-      buffer.writeSymbol(symbols[region])
+      buffer.writeSymbol(symbols[region], styles)
       buffer.render()
 
     of brCanvas:
       discard
 
     
-proc drawBorders*(rect: Rect, symbols: BorderDrawingSymbols = roundedBorderSymbols) = 
+proc drawBorders*(rect: Rect, symbols: BorderDrawingSymbols = roundedBorderSymbols, styles: SpanStyles = defaultSpanStyles) = 
   let boxRects = toBoxRects(rect)
-  drawBorders(boxRects, symbols)
+  drawBorders(boxRects, symbols, styles)
+
+
+# Possible perf bottleneck for creating 8 buffers and render immediately
+proc drawBorders*(boxRects: BoxRects, renderers: BorderRenderers) = 
+  for region in BoxRegions:
+    if region == brCanvas: continue
+
+    let buffer = newBuffer(boxRects[region])
+    renderers[region](buffer)
+    buffer.render()
+
+
+proc drawBorders*(rect: Rect, renderers: BorderRenderers) = 
+  let boxRects = toBoxRects(rect)
+  drawBorders(boxRects, renderers)
 
 
 when isMainModule:
@@ -173,6 +199,7 @@ when isMainModule:
   let
     (maxWidth, maxHeight) = terminalSize()
     minHeight = 3
+    style = initSpanStyles(fgCyan, bgDefault, {styleBlink})
 
   var
     isRunning = true
@@ -181,10 +208,9 @@ when isMainModule:
 
     rect = initRect(0, 0, width, height)
 
-
   proc renderApp() =
     eraseScreen()
-    drawBorders(rect)
+    drawBorders(rect, roundedBorderSymbols, style)
 
 
   proc resizeApp(width, height: int) = 
