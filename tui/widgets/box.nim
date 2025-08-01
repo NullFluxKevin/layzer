@@ -56,12 +56,13 @@ type
     brCanvas
     
   BoxRects* = Table[BoxRegions, Rect]
-  
-  BoxDrawingSymbols* = Table[BoxRegions, Symbol]
-  
+
+  # WARNING: BorderDrawingSymbols cantains only borders regions, accessing brCanvas will cause KeyError
+  BorderDrawingSymbols* = Table[BoxRegions, Symbol]
+
 
 let
-    singleBorderSymbols*: BoxDrawingSymbols = {
+    singleBorderSymbols*: BorderDrawingSymbols = {
       brBorderTop: "─".toSymbol,
       brBorderBottom: "─".toSymbol,
       brBorderLeft: "│".toSymbol,
@@ -72,7 +73,7 @@ let
       brCornerBottomRight: "┘".toSymbol
     }.toTable
 
-    doubleBorderSymbols*: BoxDrawingSymbols = {
+    doubleBorderSymbols*: BorderDrawingSymbols = {
       brBorderTop: "═".toSymbol,
       brBorderBottom: "═".toSymbol,
       brBorderLeft: "║".toSymbol,
@@ -83,7 +84,7 @@ let
       brCornerBottomRight: "╝".toSymbol
     }.toTable
 
-    roundedBorderSymbols*: BoxDrawingSymbols = {
+    roundedBorderSymbols*: BorderDrawingSymbols = {
       brBorderTop: "─".toSymbol,
       brBorderBottom: "─".toSymbol,
       brBorderLeft: "│".toSymbol,
@@ -137,7 +138,7 @@ proc toBoxRects*(rect: Rect): BoxRects =
   result[brCornerBottomRight] = bottomRowCols[2]
 
 
-proc drawBox*(boxRects: BoxRects, symbols: BoxDrawingSymbols = roundedBorderSymbols) = 
+proc drawBorders*(boxRects: BoxRects, symbols: BorderDrawingSymbols = roundedBorderSymbols) = 
   for region in low(BoxRegions) .. high(BoxRegions):
     case region:
     of brBorderTop, brBorderBottom:
@@ -162,9 +163,9 @@ proc drawBox*(boxRects: BoxRects, symbols: BoxDrawingSymbols = roundedBorderSymb
       discard
 
     
-proc drawBox*(rect: Rect, symbols: BoxDrawingSymbols = roundedBorderSymbols) = 
+proc drawBorders*(rect: Rect, symbols: BorderDrawingSymbols = roundedBorderSymbols) = 
   let boxRects = toBoxRects(rect)
-  drawBox(boxRects, symbols)
+  drawBorders(boxRects, symbols)
 
 
 when isMainModule:
@@ -183,7 +184,7 @@ when isMainModule:
 
   proc renderApp() =
     eraseScreen()
-    drawBox(rect)
+    drawBorders(rect)
 
 
   proc resizeApp(width, height: int) = 
