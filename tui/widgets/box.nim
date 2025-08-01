@@ -37,11 +37,17 @@
 #   procs with appropirate names that will update the widget's inner states AND WRITES the changes to the buffer.
 #   `proc render(w: Widget)` will DO NOTHING BUT rendering the widget's buffer. It SHOULD NOT FLUSH states to the buffer before rendering.
 #   `proc resized(w: Widget, newRect: Rect): Widget` creates and returns a new widget with newRect. The states of the old widget are copied to the new widget AND FLUSHED to the new widget's buffer.
+#
+# Strict distinction between draw/write and render:
+#   Anything with "draw/write" in its name is related to writing content to a buffer
+#   Anything with "render" in its name is related to display a buffer on the screen
 #------------------------------------------------------------------------------
 
 
 import terminal
 import tables
+import strformat
+import unicode
 
 import tui/render/doubleBuffer
 import tui/render/bufferWriters
@@ -56,6 +62,7 @@ type
     brCanvas
     
   BoxRects* = Table[BoxRegions, Rect]
+  BoxBuffers* = Table[BoxRegions, Buffer]
 
   # WARNING: BorderDrawingSymbols cantains only borders regions, accessing brCanvas will cause KeyError
   BorderDrawingSymbols* = Table[BoxRegions, Symbol]
@@ -68,8 +75,17 @@ type
   #   let renderers = {brBorderTop: br, ...}.toTable
   #   drawBorders(rect, renderers)
   # 
-  BorderRenderer* = proc(buffer: Buffer)
-  BorderRenderers* = Table[BoxRegions, BorderRenderer]
+  # This workaround should be wrapped in a template/macro 
+  BorderDrawer* = proc(buffer: Buffer)
+  BorderDrawers* = Table[BoxRegions, BorderDrawer]
+
+
+  # Maybe put errors somewhere else?
+  SizeError* = object of ValueError
+  ConstructTimeSizeError* = object of SizeError
+  DrawTimeSizeError* = object of SizeError
+  ContentExceedingBufferHeightDrawError* = object of DrawTimeSizeError
+  ContentExceedingBufferWidthDrawError* = object of DrawTimeSizeError
 
 
 let
@@ -115,8 +131,10 @@ proc drawLineVertical*(buffer: Buffer, symbol: Symbol, styles: SpanStyles = defa
   buffer.writeVertical(repeat(symbol, buffer.height), styles)
 
 
-proc toBoxRects*(rect: Rect): BoxRects = 
-  doAssert rect.width >= 3 and rect.height >= 3, "Error: Rect used to build the box must at least be 3x3"
+proc toBoxRects*(rect: Rect): BoxRects {.raises: {ConstructTimeSizeError}.} = 
+  if rect.width < 3 or rect.height < 3:
+    raise newException(ConstructTimeSizeError, "To draw a box in a rect, it must be at least 3x3")
+    
   let
     verticalConstraints = @[
       fixedLength(1),
@@ -148,122 +166,261 @@ proc toBoxRects*(rect: Rect): BoxRects =
   result[brCornerBottomRight] = bottomRowCols[2]
 
 
-# Possible perf bottleneck for creating 8 buffers and render immediately
-proc drawBorders*(boxRects: BoxRects, symbols: BorderDrawingSymbols = roundedBorderSymbols, styles: SpanStyles = defaultSpanStyles) = 
+proc toBoxBuffers*(rects: BoxRects): BoxBuffers = 
+  for region in BoxRegions:
+    result[region] = newBuffer(rects[region])
+
+
+proc drawBorders*(boxBuffers: BoxBuffers, symbols: BorderDrawingSymbols = roundedBorderSymbols, styles: SpanStyles = defaultSpanStyles) = 
   for region in BoxRegions:
     case region:
     of brBorderTop, brBorderBottom:
-      let buffer = newBuffer(boxRects[region])
-      buffer.drawLineHorizontal(symbols[region], styles)
-      buffer.render()
+      boxBuffers[region].drawLineHorizontal(symbols[region], styles)
 
     of brBorderLeft, brBorderRight:
-      let buffer = newBuffer(boxRects[region])
-      buffer.drawLineVertical(symbols[region], styles)
-      buffer.render()
+      boxBuffers[region].drawLineVertical(symbols[region], styles)
 
     of brCornerTopLeft,
       brCornerTopRight,
       brCornerBottomLeft,
       brCornerBottomRight:
-      let buffer = newBuffer(boxRects[region])
-      buffer.writeSymbol(symbols[region], styles)
-      buffer.render()
+      boxBuffers[region].writeSymbol(symbols[region], styles)
 
     of brCanvas:
       discard
 
-    
-proc drawBorders*(rect: Rect, symbols: BorderDrawingSymbols = roundedBorderSymbols, styles: SpanStyles = defaultSpanStyles) = 
-  let boxRects = toBoxRects(rect)
-  drawBorders(boxRects, symbols, styles)
 
-
-# Possible perf bottleneck for creating 8 buffers and render immediately
-proc drawBorders*(boxRects: BoxRects, renderers: BorderRenderers) = 
+proc drawBorders*(boxBuffers: BoxBuffers, drawers: BorderDrawers) = 
   for region in BoxRegions:
     if region == brCanvas: continue
 
-    let buffer = newBuffer(boxRects[region])
-    renderers[region](buffer)
-    buffer.render()
+    drawers[region](boxBuffers[region])
 
 
-proc drawBorders*(rect: Rect, renderers: BorderRenderers) = 
-  let boxRects = toBoxRects(rect)
-  drawBorders(boxRects, renderers)
+proc drawContentBorderHorizontal*(buffer: Buffer,
+   text: string,
+   symbol: Symbol,
+   styles: SpanStyles = defaultSpanStyles,
+   textPosOffset: Natural = 2) {.raises: {ContentExceedingBufferWidthDrawError}.} =
 
+  let textWidth = displayWidth(text)
+  if textWidth + textPosOffset > buffer.width:
+    raise newException(ContentExceedingBufferWidthDrawError, fmt"Text display width: {textWidth}; Buffer width: {buffer.width}")
+
+  var content = repeat(symbol, textPosOffset)
+  content &= text
+  content &= repeat(symbol, buffer.width - displayWidth(content))
+
+  buffer.writeHorizontal(content, styles)
+
+
+proc drawContentBorderVertical*(buffer: Buffer,
+   text: string,
+   symbol: Symbol,
+   styles: SpanStyles = defaultSpanStyles,
+   textPosOffset: Natural = 2) {.raises: {ContentExceedingBufferHeightDrawError}.} = 
+
+  let textRuneLen = text.runeLen
+  if textRuneLen + textPosOffset > buffer.height:
+    raise newException(ContentExceedingBufferHeightDrawError, fmt"Text length: {textRuneLen}; Buffer height: {buffer.height}")
+
+  var content = repeat(symbol, textPosOffset)
+  content &= text
+  content &= repeat(symbol, buffer.height - content.runeLen)
+
+  buffer.writeVertical(content, styles)
+
+
+proc drawContentBorderHorizontal*(buffer: Buffer,
+   text: string,
+   symbol: Symbol,
+   textStyles: SpanStyles = defaultSpanStyles,
+   symbolStyles: SpanStyles = defaultSpanStyles,
+   textPosOffset: Natural = 2) {.raises: {ContentExceedingBufferWidthDrawError}.} =
+
+  doAssert buffer.height == 1, "Error: Horizontal border can only be draw to buffers of height 1"
+
+  let textWidth = displayWidth(text)
+  if textWidth + textPosOffset > buffer.width:
+    raise newException(ContentExceedingBufferWidthDrawError, fmt"Text display width: {textWidth}; Buffer width: {buffer.width}")
+
+
+  let
+    remainLen = buffer.width - textWidth - textPosOffset
+
+    rect = buffer.lines[0]
+    sections = layout(ldHorizontal, rect, @[
+      fixedLength(textPosOffset),
+      fixedLength(textWidth),
+      fixedLength(remainLen),
+    ])
+
+    spans = @[
+      toSpan(sections[0], repeat(symbol, textPosOffset), symbolStyles),
+      toSpan(sections[1], text, textStyles),
+      toSpan(sections[2], repeat(symbol, remainLen), symbolStyles),
+    ]
+
+  buffer.setLineContent(0, spans)
+
+
+proc drawContentBorderVertical*(buffer: Buffer,
+   text: string,
+   symbol: Symbol,
+   textStyles: SpanStyles = defaultSpanStyles,
+   symbolStyles: SpanStyles = defaultSpanStyles,
+   textPosOffset: Natural = 2) {.raises: {ContentExceedingBufferHeightDrawError}.} = 
+
+  doAssert buffer.width == 1, "Error: Vertical border can only be draw to buffers of width 1"
+
+  let textRuneLen = text.runeLen
+  if textRuneLen + textPosOffset > buffer.height:
+    raise newException(ContentExceedingBufferHeightDrawError, fmt"Text length: {textRuneLen}; Buffer height: {buffer.height}")
+
+
+  var content = repeat(symbol, textPosOffset)
+  content &= text
+  content &= repeat(symbol, buffer.height - content.runeLen)
+
+  for lineNumber, rune in content.toRunes:
+    var currentStyles: SpanStyles
+    if lineNumber < textPosOffset or lineNumber >= textPosOffset + textRuneLen:
+      currentStyles = symbolStyles
+    else:
+      currentStyles = textStyles
+
+    buffer.writeToLine(lineNumber, $rune, currentStyles)
+ 
 
 when isMainModule:
-  
   let
-    (maxWidth, maxHeight) = terminalSize()
-    minHeight = 3
-    style = initSpanStyles(fgCyan, bgDefault, {styleBlink})
+    gTitleStyle = initSpanStyles(fgYellow, bgDefault)
+    gStyleOK = initSpanStyles(fgCyan, bgDefault)
+    gStyleReachMinSize = initSpanStyles(fgRed, bgDefault)
 
   var
-    isRunning = true
-    (width, height) = (maxWidth, maxHeight)
-    minWidth = 3
+    (gMaxWidth, gMaxHeight) = terminalSize()
+    gIsRunning = true
+    gRect = initRect(0, 0, gMaxWidth, gMaxHeight)
+    gBoxRects = toBoxRects(gRect)
+    gBoxBuffers = toBoxBuffers(gBoxRects)
+    gStyles = gStyleOK
 
-    rect = initRect(0, 0, width, height)
+
+  let
+    gBorderBottomDrawer: BorderDrawer = proc(buffer: Buffer) = drawLineHorizontal(buffer, "=".toSymbol, gStyles)
+
+    gBorderVerticalDrawer: BorderDrawer = proc(buffer: Buffer) = drawLineVertical(buffer, "#".toSymbol, gStyles)
+
+    gTitleBorderLeftDrawer: BorderDrawer = proc(buffer: Buffer) = drawContentBorderVertical(buffer, "Layzer", "|".toSymbol, gTitleStyle, gStyles)
+
+    gBorderCornerDrawer: BorderDrawer = proc(buffer: Buffer) = writeSymbol(buffer, "+".toSymbol, gStyles)
+
+  var gDrawers = {
+    brBorderBottom: gBorderBottomDrawer,
+    brBorderLeft: gTitleBorderLeftDrawer,
+    brBorderRight: gBorderVerticalDrawer,
+    brCornerTopLeft: gBorderCornerDrawer,
+    brCornerTopRight: gBorderCornerDrawer,
+    brCornerBottomLeft: gBorderCornerDrawer,
+    brCornerBottomRight: gBorderCornerDrawer,
+  }.toTable
+
+
+  proc drawApp() =
+    let title = fmt"Size: {gRect.width} x {gRect.height}"
+    let titleBorderTopDrawer: BorderDrawer = proc(buffer: Buffer) = drawContentBorderHorizontal(buffer, title, "-".toSymbol, gTitleStyle, gStyles)
+
+    gDrawers[brBorderTop] = titleBorderTopDrawer
+
+    drawBorders(gBoxBuffers, gDrawers)
+
 
   proc renderApp() =
     eraseScreen()
-    drawBorders(rect, roundedBorderSymbols, style)
+    for _, buffer in gBoxBuffers:
+      buffer.render()
 
 
-  proc resizeApp(width, height: int) = 
-    rect = initRect(rect.x, rect.y, width, height)
+  proc resizeApp(newWidth, newHeight: Natural) = 
+
+    let
+      rectBackup = gRect
+      newRect = initRect(gRect.x, gRect.y, newWidth, newHeight)
+
+    gRect = newRect
+
+    try:
+      gBoxRects = toBoxRects(gRect)
+      gBoxBuffers = toBoxBuffers(gBoxRects)
+      drawApp()
+      renderApp()
+    except SizeError: 
+      gStyles = gStyleReachMinSize
+      # This creates new buffers with the old rect and renders,
+      # it's a little wasteful but good enough for MVP
+      # Maybe move to a transactional design when needed? If draw with the new rect/buffer is successful, commit the new rect and buffer; otherwise, do nothing
+      resizeApp(rectBackup.width, rectBackup.height)
 
 
   proc onKeyPress(ctx: EventContext) =
     if not (ctx of KeyContext):
       return
 
+    gStyles = gStyleOK
+
     let c = KeyContext(ctx)
     let key = c.key
     
-    if key == Key.Q or key == Key.CtrlC:
+    case key:
+    of Key.Q, Key.CtrlC:
       println("Exiting...")
-      isRunning = false
+      gIsRunning = false
 
       eraseScreen()
       setCursorPos(0, 0)
       showCursor()
 
-    elif key == Key.K:
-      width = clamp(width + 1, minWidth, maxWidth)
-      height = clamp(height + 1, minHeight, maxHeight)
-      resizeApp(width, height)
-      renderApp()
+    of Key.H:
+      let newWidth = min(gRect.width - 1, gMaxWidth)
+      resizeApp(newWidth, gRect.height)
+
+    of Key.L:
+      let newWidth = min(gRect.width + 1, gMaxWidth)
+      resizeApp(newWidth, gRect.height)
+
+    of Key.K:
+      let newHeight = min(gRect.height + 1, gMaxHeight)
+      resizeApp(gRect.width, newHeight)
       
-    elif key == Key.J:
-      width = clamp(width - 1, minWidth, maxWidth)
-      height = clamp(height - 1, minHeight, maxHeight)
-      resizeApp(width, height)
-      renderApp()
+    of Key.J:
+      let newHeight = min(gRect.height - 1, gMaxHeight)
+      resizeApp(gRect.width, newHeight)
+
+    else:
+      discard
 
 
   proc onResize(ctx: EventContext) =
     if not (ctx of ResizeContext):
       return
 
+    gStyles = gStyleOK
     let c = ResizeContext(ctx)
-    (width, height) = (c.width, c.height)
-    resizeApp(width, height)
-    renderApp()
+    (gMaxWidth, gMaxHeight) = (c.width, c.height)
+    resizeApp(gMaxWidth, gMaxHeight)
 
 
-  println("Press J and K to change box size; resize terminal to redraw fullscreen box.")
+  println("Press H J K L to change box size; resize terminal to redraw fullscreen box.")
   println("Press Q or Ctrl-C to quit. Press anything to start the demo.")
   discard getch()
 
   hideCursor()
 
+  drawApp()
   renderApp()
 
   let tuiConfig = initTuiConfig()
-  runTuiApp(tuiConfig, isRunning, onResize, onKeyPress):
+  runTuiApp(tuiConfig, gIsRunning, onResize, onKeyPress):
     discard
 
