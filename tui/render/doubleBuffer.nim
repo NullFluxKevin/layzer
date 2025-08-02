@@ -23,7 +23,7 @@ type WChar = int32
 proc wcwidth(c: WChar): cint {.importc, cdecl, header:"<wchar.h>".}
 
 
-proc displayWidth*(content: string): int = 
+proc displayWidth*(content: string): Natural = 
   for rune in content.toRunes:
     let charWidth = wcwidth(rune.WChar)
 
