@@ -98,13 +98,20 @@ import layoutEngine
 # An idea I had when I was designing this is to use a binary tree. Each keyword is a root node of a subtree, left and right points to substrings next to it. But that would also need traversal which uses either recursion or stack/queue. And there is also the problem of inbalanced trees. That seemed more complicated, so I just went for a queue implementation directly. I could be wrong, maybe that's the right/better way to do it.
 #   
 #  
-# Important limitation:
+# Important limitations:
 # ===================================================
+# Keyword matches spanning lines
+# ==============================
 # When treating the paragragh as lines of chars, if a keyword is split to two lines, it won't be highlighted.
 # 
 # For example, keyword "emoGiraffe" with "emoG" at the end of the line and "iraffe" at the beginning of the next.
 #
 # A possible solution is to implement a new ParagraphLines parsing logic forcing keywords to be on the same line while the rest can remain stream of chars. Could be useful for keywords in paragraphs in CJK.
+#
+# 
+# Keyword within a sequence of chars from different languages and/or emojis
+# ==============================
+# The keyword with in such sequence can not be detected, thus can't be rendered with given styles.
 # ========================================================================
  
  
@@ -401,7 +408,7 @@ when isMainModule:
 
     rect = initRect(0, 0, width, height)
 
-    paragraph = "Lorem ipsum dolor sit amet. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. as. assassin. assassin-as-a-service. assassin-as-a-service-as-a-joke.😞🦒, 😞🦒😞🦒. A paragraph of emojis, it's an emojiraph! 😞🦒😞🦒😞🦒😞🦒, emo😞, giraffe🦒, 😞emoGiraffe🦒, 😞😞🦒😞🦒😞. emoGiraffe你好，你好emo😞🦒啊。"     
+    paragraph = "Lorem ipsum dolor sit amet. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. as. assassin. assassin-as-a-service. assassin-as-a-service-as-a-joke.😞🦒, 😞🦒😞🦒. A paragraph of emojis, it's an emojiraph! 😞🦒😞🦒😞🦒😞🦒, emo😞, giraffe🦒, 😞emoGiraffe🦒, 😞😞🦒😞🦒😞. 你好，emoGiraffe你好，你好emo😞🦒啊。"     
 
 
   let keywordStyles = {
@@ -417,7 +424,7 @@ when isMainModule:
   }.toTable
   
   var buffer = newBuffer(rect)
-  # # let lines = paragraph.toLinesOfWords(buffer.width)
+  # let lines = paragraph.toLinesOfWords(buffer.width)
   let lines = paragraph.toLinesOfChars(buffer.width)
   drawParagraphLines(buffer, lines, keywordStyles)
 
